@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 mod ring;
 
 pub use ring::{receiver, sender};
