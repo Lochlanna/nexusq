@@ -9,11 +9,11 @@ pub enum SenderError {}
 
 #[derive(Debug)]
 pub struct Sender<T> {
-    disruptor: Arc<DisruptorCore<T>>,
+    disruptor: Arc<Core<T>>,
 }
 
-impl<T> From<Arc<DisruptorCore<T>>> for Sender<T> {
-    fn from(disruptor: Arc<DisruptorCore<T>>) -> Self {
+impl<T> From<Arc<Core<T>>> for Sender<T> {
+    fn from(disruptor: Arc<Core<T>>) -> Self {
         Self { disruptor }
     }
 }
@@ -32,17 +32,26 @@ impl<T> Sender<T> {
         }
 
         let capacity = self.disruptor.capacity as isize;
-        while oldest_reader_id == claimed - capacity {
+        let tail = claimed - capacity;
+        while oldest_reader_id <= tail {
             let listener = self.disruptor.reader_move.listen();
             if let Some(oldest) = self.disruptor.readers.front() {
                 oldest_reader_id = oldest.value().current_id;
             } else {
                 return claimed;
             }
-            if oldest_reader_id == claimed - capacity {
+            if oldest_reader_id > tail {
                 return claimed;
             }
             listener.wait();
+            if let Some(oldest) = self.disruptor.readers.front() {
+                oldest_reader_id = oldest.value().current_id;
+            } else {
+                return claimed;
+            }
+        }
+        if oldest_reader_id == tail {
+            println!("d{}:{}:{}", oldest_reader_id, claimed, capacity);
         }
 
         // TODO check if there is another writer writing to a different ID but the same cell.

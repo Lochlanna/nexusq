@@ -1,17 +1,10 @@
 #![allow(dead_code)]
 
-mod disruptor;
+extern crate core;
 
-use disruptor::DisruptorCore;
-pub use disruptor::{receiver::Receiver, sender::Sender};
-use std::sync::Arc;
+mod broadcast;
 
-pub fn channel<T>(size: usize) -> (Sender<T>, Receiver<T>) {
-    let core = Arc::new(DisruptorCore::new(size));
-    let sender = Sender::from(core.clone());
-    let receiver = Receiver::from(core);
-    (sender, receiver)
-}
+pub use broadcast::{channel, receiver::Receiver, sender::Sender};
 
 #[cfg(test)]
 mod tests {
@@ -28,7 +21,7 @@ mod tests {
         });
         let receiver_jh = spawn(move || {
             let mut values = Vec::with_capacity(num);
-            for i in 0..num {
+            for _ in 0..num {
                 loop {
                     let v = receiver.try_read_next();
                     if v.is_err() {

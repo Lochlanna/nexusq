@@ -2,6 +2,7 @@ use crossbeam_skiplist::SkipSet;
 use event_listener::Event;
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicIsize, AtomicUsize};
+use std::sync::Arc;
 
 pub mod receiver;
 pub mod sender;
@@ -48,7 +49,7 @@ impl Ord for ReadCursor {
 }
 
 #[derive(Debug)]
-pub(crate) struct DisruptorCore<T> {
+pub(crate) struct Core<T> {
     ring: *mut Vec<T>,
     capacity: usize,
     claimed: AtomicIsize,
@@ -61,10 +62,10 @@ pub(crate) struct DisruptorCore<T> {
     readers: SkipSet<ReadCursor>,
 }
 
-unsafe impl<T> Send for DisruptorCore<T> {}
-unsafe impl<T> Sync for DisruptorCore<T> {}
+unsafe impl<T> Send for Core<T> {}
+unsafe impl<T> Sync for Core<T> {}
 
-impl<T> Drop for DisruptorCore<T> {
+impl<T> Drop for Core<T> {
     fn drop(&mut self) {
         unsafe {
             drop(Box::from_raw(self.ring));
@@ -72,7 +73,7 @@ impl<T> Drop for DisruptorCore<T> {
     }
 }
 
-impl<T> DisruptorCore<T> {
+impl<T> Core<T> {
     pub(crate) fn new(buffer_size: usize) -> Self {
         let mut ring = Box::new(Vec::with_capacity(buffer_size));
         let capacity = ring.capacity();
@@ -95,4 +96,11 @@ impl<T> DisruptorCore<T> {
             readers: Default::default(),
         }
     }
+}
+
+pub fn channel<T>(size: usize) -> (sender::Sender<T>, receiver::Receiver<T>) {
+    let core = Arc::new(Core::new(size));
+    let sender = sender::Sender::from(core.clone());
+    let receiver = receiver::Receiver::from(core);
+    (sender, receiver)
 }
