@@ -50,10 +50,6 @@ impl<T> Sender<T> {
                 return claimed;
             }
         }
-        if oldest_reader_id == tail {
-            println!("d{}:{}:{}", oldest_reader_id, claimed, capacity);
-        }
-
         // TODO check if there is another writer writing to a different ID but the same cell.
 
         claimed
