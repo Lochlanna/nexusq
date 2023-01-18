@@ -1,6 +1,6 @@
 use crossbeam_skiplist::SkipSet;
+use event_listener::Event;
 use std::cmp::Ordering;
-use std::intrinsics::forget;
 use std::sync::atomic::{AtomicIsize, AtomicUsize};
 
 pub mod receiver;
@@ -48,12 +48,15 @@ impl Ord for ReadCursor {
 }
 
 #[derive(Debug)]
-struct DisruptorCore<T> {
+pub(crate) struct DisruptorCore<T> {
     ring: *mut Vec<T>,
-    buffer_size: usize,
+    capacity: usize,
     claimed: AtomicIsize,
     committed: AtomicIsize,
     next_reader_id: AtomicUsize,
+    // is there a better way than events?
+    reader_move: Event,
+    writer_move: Event,
     // Reference to each reader to get their position. It should be sorted(how..?)
     readers: SkipSet<ReadCursor>,
 }
@@ -69,18 +72,23 @@ impl<T> Drop for DisruptorCore<T> {
 impl<T> DisruptorCore<T> {
     pub(crate) fn new(buffer_size: usize) -> Self {
         let mut ring = Box::new(Vec::with_capacity(buffer_size));
+        let capacity = ring.capacity();
         unsafe {
-            ring.set_len(buffer_size);
+            // use capacity as vec is allowed to allocate more than buffer_size if it likes so
+            //we might as well use it!
+            ring.set_len(capacity);
         }
 
         let ring = Box::into_raw(ring);
 
         Self {
             ring,
-            buffer_size,
+            capacity,
             claimed: AtomicIsize::new(0),
             committed: AtomicIsize::new(-1),
             next_reader_id: AtomicUsize::default(),
+            reader_move: Default::default(),
+            writer_move: Default::default(),
             readers: Default::default(),
         }
     }

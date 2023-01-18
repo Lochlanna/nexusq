@@ -15,6 +15,15 @@ pub struct Receiver<T> {
     cursor: ReadCursor,
 }
 
+impl<T> From<Arc<DisruptorCore<T>>> for Receiver<T> {
+    fn from(disruptor: Arc<DisruptorCore<T>>) -> Self {
+        let id = disruptor.next_reader_id.fetch_add(1, AOrdering::Release);
+        let cursor = ReadCursor::new(id);
+        disruptor.readers.insert(cursor);
+        Self { disruptor, cursor }
+    }
+}
+
 impl<T> Receiver<T> {
     #[inline]
     fn increment_cursor(&mut self) {
@@ -37,13 +46,14 @@ where
         if self.cursor.current_id > committed {
             return Err(ReaderError::NoNewData);
         }
-        let index = self.cursor.current_id as usize % self.disruptor.buffer_size;
+        let index = self.cursor.current_id as usize % self.disruptor.capacity;
         // the value has been committed so it's safe to read it!
         let value;
         unsafe {
             value = (*self.disruptor.ring).get_unchecked(index).clone();
         }
         self.increment_cursor();
+        self.disruptor.reader_move.notify(usize::MAX);
         Ok(value)
     }
 }
