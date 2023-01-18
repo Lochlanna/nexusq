@@ -1,4 +1,5 @@
 use super::*;
+use std::mem::forget;
 use std::sync::atomic::Ordering as AOrdering;
 use std::sync::Arc;
 use thiserror::Error;
@@ -50,10 +51,12 @@ impl<T> Sender<T> {
     }
     pub fn send(&self, value: T) {
         let claimed_id = self.claim();
-        let index = claimed_id as usize % self.disruptor.capacity;
-        unsafe {
-            (*self.disruptor.ring)[index] = value;
-        }
+        let capacity = self.disruptor.capacity;
+        let index = claimed_id as usize % capacity;
+
+        let old_value;
+        unsafe { old_value = std::mem::replace(&mut (*self.disruptor.ring)[index], value) }
+
         // TODO what's the optimisation here
         // wait for writers to catch up and commit their transactions
         while self
@@ -69,5 +72,13 @@ impl<T> Sender<T> {
         {}
         // Notify other threads that a value has been written
         self.disruptor.writer_move.notify(usize::MAX);
+
+        // We do this at the end to ensure that we're not worrying about wierd drop functions or
+        // allocations happening during the critical path
+        if (claimed_id as usize) < capacity {
+            forget(old_value);
+        } else {
+            drop(old_value);
+        }
     }
 }

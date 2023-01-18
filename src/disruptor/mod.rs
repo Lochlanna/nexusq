@@ -61,6 +61,9 @@ pub(crate) struct DisruptorCore<T> {
     readers: SkipSet<ReadCursor>,
 }
 
+unsafe impl<T> Send for DisruptorCore<T> {}
+unsafe impl<T> Sync for DisruptorCore<T> {}
+
 impl<T> Drop for DisruptorCore<T> {
     fn drop(&mut self) {
         unsafe {

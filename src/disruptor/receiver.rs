@@ -15,6 +15,12 @@ pub struct Receiver<T> {
     cursor: ReadCursor,
 }
 
+impl<T> Drop for Receiver<T> {
+    fn drop(&mut self) {
+        self.disruptor.readers.remove(&self.cursor);
+    }
+}
+
 impl<T> From<Arc<DisruptorCore<T>>> for Receiver<T> {
     fn from(disruptor: Arc<DisruptorCore<T>>) -> Self {
         let id = disruptor.next_reader_id.fetch_add(1, AOrdering::Release);
