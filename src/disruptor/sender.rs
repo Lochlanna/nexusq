@@ -44,6 +44,8 @@ impl<T> Sender<T> {
             listener.wait();
         }
 
+        // TODO check if there is another writer writing to a different ID but the same cell.
+
         claimed
     }
     pub fn send(&self, value: T) {

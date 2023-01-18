@@ -1,11 +1,9 @@
 #![allow(dead_code)]
 
-mod ring;
+mod disruptor;
 
-use crate::ring::DisruptorCore;
-use receiver::Receiver;
-pub use ring::{receiver, sender};
-use sender::Sender;
+use disruptor::DisruptorCore;
+pub use disruptor::{receiver::Receiver, sender::Sender};
 use std::sync::Arc;
 
 pub fn channel<T>(size: usize) -> (Sender<T>, Receiver<T>) {
