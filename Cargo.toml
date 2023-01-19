@@ -13,3 +13,10 @@ event-listener = "2.5.3"
 [dev-dependencies]
 criterion = "0.4"
 tokio = "1.24.2"
+multiqueue = "0.3.2"
+multiqueue2 = "0.1.7"
+
+
+[[bench]]
+name = "one_to_one"
+harness = false
