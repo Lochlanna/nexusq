@@ -16,10 +16,10 @@ where
 {
     type Item = T;
 
+    #[inline(always)]
     fn test_recv(&mut self) -> Self::Item {
         loop {
-            let res = self.try_read_next();
-            match res {
+            match self.try_read_next() {
                 Ok(v) => return v,
                 Err(_) => continue,
             }
@@ -36,6 +36,7 @@ where
     T: 'static + Clone + Send,
 {
     type Item = T;
+    #[inline(always)]
     fn test_recv(&mut self) -> Self::Item {
         loop {
             let res = self.recv();
@@ -47,7 +48,7 @@ where
     }
 
     fn another(&self) -> Self {
-        self.clone()
+        self.add_stream()
     }
 }
 
@@ -56,6 +57,7 @@ where
     T: 'static + Clone + Send + Sync,
 {
     type Item = T;
+    #[inline(always)]
     fn test_recv(&mut self) -> Self::Item {
         loop {
             let res = self.recv();
@@ -67,7 +69,7 @@ where
     }
 
     fn another(&self) -> Self {
-        self.clone()
+        self.add_stream()
     }
 }
 
@@ -93,6 +95,7 @@ impl<T> TestSender<T> for multiqueue::BroadcastSender<T>
 where
     T: 'static + Clone + Send,
 {
+    #[inline(always)]
     fn test_send(&mut self, mut value: T) {
         while let Err(err) = self.try_send(value) {
             match err {
@@ -111,6 +114,7 @@ impl<T> TestSender<T> for multiqueue2::BroadcastSender<T>
 where
     T: 'static + Clone + Send + Sync,
 {
+    #[inline(always)]
     fn test_send(&mut self, mut value: T) {
         while let Err(err) = self.try_send(value) {
             match err {
@@ -147,15 +151,18 @@ fn test(
     sender: impl TestSender<usize>,
     receiver: impl TestReceiver,
 ) {
-    let readers: Vec<JoinHandle<()>> = (0..num_readers)
-        .map(|_| {
-            let new_receiver = receiver.another();
-            spawn(move || {
-                read_n(new_receiver, num_elements);
+    let readers: Vec<JoinHandle<()>>;
+    if num_readers > 1 {
+        readers = (0..num_readers)
+            .map(|_| {
+                let new_receiver = receiver.another();
+                spawn(move || read_n(new_receiver, num_elements * num_writers))
             })
-        })
-        .collect();
-
+            .collect();
+        drop(receiver);
+    } else {
+        readers = vec![spawn(move || read_n(receiver, num_elements * num_writers))];
+    }
     let writers: Vec<JoinHandle<()>> = (0..num_writers)
         .map(|_| {
             let new_sender = sender.another();
@@ -170,12 +177,12 @@ fn test(
     }
     for reader in readers {
         let res = reader.join();
-        assert!(res.is_ok());
+        assert!(res.is_ok())
     }
 }
 
 fn nexus(num: usize) {
-    let (mut sender, mut receiver) = channel(100);
+    let (sender, receiver) = channel(100);
     test(num, 2, 2, sender, receiver);
 }
 
@@ -190,7 +197,7 @@ fn multiq2(num: usize) {
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
-    let num = 100000;
+    let num = 10000;
     let mut group = c.benchmark_group("two sender two receiver");
     group.throughput(Throughput::Elements(num as u64));
     group.bench_function(format!("nexus {}", num).as_str(), |b| {
