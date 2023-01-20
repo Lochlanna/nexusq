@@ -9,6 +9,7 @@ edition = "2021"
 thiserror = "1.0.38"
 event-listener = "2.5.3"
 parking_lot = "0.12.1"
+crossbeam-utils = "0.8.14"
 
 [dev-dependencies]
 criterion = "0.4"

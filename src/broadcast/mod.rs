@@ -2,6 +2,7 @@ pub mod receiver;
 mod receiver_tracker;
 pub mod sender;
 
+use crossbeam_utils::CachePadded;
 use event_listener::Event;
 use receiver_tracker::ReceiverTracker;
 use std::sync::atomic::{AtomicIsize, AtomicUsize};
@@ -11,8 +12,8 @@ use std::sync::Arc;
 pub(crate) struct Core<T> {
     ring: *mut Vec<T>,
     capacity: isize,
-    claimed: AtomicIsize,
-    committed: AtomicIsize,
+    claimed: CachePadded<AtomicIsize>,
+    committed: CachePadded<AtomicIsize>,
     // is there a better way than events?
     reader_move: Event,
     writer_move: Event,
@@ -47,8 +48,8 @@ impl<T> Core<T> {
         Self {
             ring,
             capacity: capacity as isize,
-            claimed: AtomicIsize::new(0),
-            committed: AtomicIsize::new(-1),
+            claimed: CachePadded::new(AtomicIsize::new(0)),
+            committed: CachePadded::new(AtomicIsize::new(-1)),
             reader_move: Default::default(),
             writer_move: Default::default(),
             readers: Default::default(),
