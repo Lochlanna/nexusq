@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+extern crate core;
+
 mod broadcast;
 
 pub use broadcast::{channel, receiver::Receiver, sender::Sender};
@@ -80,5 +82,54 @@ mod tests {
     fn two_writer_two_reader() {
         let num = 5000;
         test(num, 2, 2, 10);
+    }
+
+    #[test]
+    fn test_batch_read() {
+        let (mut sender, mut receiver) = channel(10);
+        let expected: Vec<i32> = (0..8).collect();
+        for i in &expected {
+            sender.send(*i);
+        }
+        let mut result = Vec::new();
+        receiver
+            .batch_recv(&mut result)
+            .expect("receiver was okay!");
+
+        assert_eq!(result, expected)
+    }
+
+    #[test]
+    fn test_read_entire_buffer() {
+        let (mut sender, mut receiver) = channel(10);
+        let expected: Vec<i32> = (0..10).collect();
+        for i in &expected {
+            sender.send(*i);
+        }
+        let mut result = Vec::new();
+        receiver
+            .batch_recv(&mut result)
+            .expect("receiver was okay!");
+
+        assert_eq!(result, expected)
+    }
+
+    #[test]
+    fn test_wrapping_batch() {
+        let (mut sender, mut receiver) = channel(10);
+        for i in (0..10) {
+            sender.send(i);
+        }
+        let _ = receiver.recv();
+        let _ = receiver.recv();
+        sender.send(10);
+        sender.send(11);
+        let expected: Vec<i32> = (2..12).collect();
+        let mut result = Vec::new();
+        receiver
+            .batch_recv(&mut result)
+            .expect("receiver was okay!");
+
+        assert_eq!(result, expected)
     }
 }

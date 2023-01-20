@@ -1,4 +1,5 @@
 use super::*;
+use core::slice;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use thiserror::Error;
@@ -15,6 +16,7 @@ pub struct Receiver<T> {
     internal_cursor: isize,
     shared_cursor: Arc<AtomicUsize>,
     shared_cursor_id: usize,
+    capacity: isize,
 }
 
 impl<T> Drop for Receiver<T> {
@@ -33,11 +35,13 @@ impl<T> From<Arc<Core<T>>> for Receiver<T> {
                 .load(Ordering::Acquire)
                 .clamp(0, isize::MAX),
         );
+        let capacity = disruptor.capacity;
         Self {
             disruptor,
             internal_cursor: shared_cursor.load(Ordering::Relaxed) as isize,
             shared_cursor,
             shared_cursor_id,
+            capacity,
         }
     }
 }
@@ -52,6 +56,7 @@ impl<T> Clone for Receiver<T> {
             internal_cursor: shared_cursor.load(Ordering::Relaxed) as isize,
             shared_cursor,
             shared_cursor_id,
+            capacity: self.capacity,
         }
     }
 }
@@ -151,5 +156,52 @@ where
                 },
             };
         }
+    }
+
+    pub fn batch_recv(&mut self, res: &mut Vec<T>) -> Result<(), ReaderError> {
+        let committed = self.disruptor.committed.load(Ordering::Acquire);
+        if self.internal_cursor > committed {
+            return Err(ReaderError::NoNewData);
+        }
+        let num_to_read = (committed + 1 - self.internal_cursor) as usize;
+        res.reserve_exact(num_to_read);
+        let from_index = (self.internal_cursor % self.capacity) as usize;
+        let to_index = from_index + num_to_read;
+        if to_index <= self.capacity as usize {
+            // this copy won't wrap
+            unsafe {
+                let target =
+                    slice::from_raw_parts_mut(res.as_mut_ptr().add(res.len()), num_to_read);
+                let src = &(*self.disruptor.ring)[from_index..to_index];
+                res.set_len(res.len() + target.len());
+                // Clone will specialise to copy when it can. This will be very fast for copy types!
+                target.clone_from_slice(src);
+            }
+        } else {
+            //this copy will wrap!
+            // end section
+            unsafe {
+                let target = slice::from_raw_parts_mut(
+                    res.as_mut_ptr().add(res.len()),
+                    self.capacity as usize - from_index,
+                );
+                let src = &(*self.disruptor.ring)[from_index..];
+                res.set_len(res.len() + target.len());
+                // Clone will specialise to copy when it can. This will be very fast for copy types!
+                target.clone_from_slice(src);
+            }
+            // start section
+            unsafe {
+                let target = slice::from_raw_parts_mut(
+                    res.as_mut_ptr().add(res.len()),
+                    to_index - self.capacity as usize,
+                );
+                let src = &(*self.disruptor.ring)[..(to_index - (self.capacity as usize))];
+                res.set_len(res.len() + target.len());
+                // Clone will specialise to copy when it can. This will be very fast for copy types!
+                target.clone_from_slice(src);
+            }
+        }
+        Ok(())
     }
 }
