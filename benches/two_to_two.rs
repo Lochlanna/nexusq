@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use std::sync::mpsc::TrySendError;
 
-use nexusq::{channel, Receiver};
+use nexusq::channel;
 use std::thread::{spawn, JoinHandle};
 
 trait TestReceiver: Send + 'static {
@@ -199,7 +199,7 @@ fn multiq2(num: usize) {
 fn criterion_benchmark(c: &mut Criterion) {
     let num = 10000;
     let mut group = c.benchmark_group("two sender two receiver");
-    group.throughput(Throughput::Elements(num as u64));
+    group.throughput(Throughput::Elements(num as u64 * 2));
     group.bench_function(format!("nexus {}", num).as_str(), |b| {
         b.iter(|| nexus(black_box(num)))
     });

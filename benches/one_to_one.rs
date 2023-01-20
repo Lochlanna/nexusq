@@ -7,13 +7,7 @@ fn nexus(num: usize) {
     let (mut sender, mut receiver) = channel(100);
     let receiver_jh = spawn(move || {
         for _ in 0..num {
-            loop {
-                let v = receiver.try_read_next();
-                if v.is_err() {
-                    continue;
-                }
-                break;
-            }
+            let _ = receiver.recv().unwrap();
         }
     });
     for i in 0..num {

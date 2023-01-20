@@ -63,7 +63,7 @@ impl ReceiverTracker {
         {
             let mut write_lock = self.receiver_cells.write();
             write_lock.push(new_cell);
-            return (write_lock.len() - 1, cloned_new_cell);
+            (write_lock.len() - 1, cloned_new_cell)
         }
     }
 
@@ -91,10 +91,10 @@ impl ReceiverTracker {
             }
             let position = position as isize;
             if position <= min {
-                return position as isize;
+                return position;
             }
             if position < slowest {
-                slowest = position as isize;
+                slowest = position;
             }
         }
         // cache this computation so that we may not have to do a scan next time!

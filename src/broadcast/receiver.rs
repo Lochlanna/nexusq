@@ -43,8 +43,16 @@ impl<T> From<Arc<Core<T>>> for Receiver<T> {
 }
 
 impl<T> Clone for Receiver<T> {
+    /// Creates a new receiver at the same point in the stream
     fn clone(&self) -> Self {
-        self.disruptor.clone().into()
+        let (shared_cursor_id, shared_cursor) =
+            self.disruptor.readers.new_receiver(self.internal_cursor);
+        Self {
+            disruptor: self.disruptor.clone(),
+            internal_cursor: shared_cursor.load(Ordering::Relaxed) as isize,
+            shared_cursor,
+            shared_cursor_id,
+        }
     }
 }
 
@@ -61,6 +69,10 @@ impl<T> Receiver<T>
 where
     T: Clone,
 {
+    /// Creates a new receiver at the most recent entry in the stream
+    pub fn add_stream(&self) -> Self {
+        self.disruptor.clone().into()
+    }
     pub fn try_read_next(&mut self) -> Result<T, ReaderError> {
         let committed = self.disruptor.committed.load(Ordering::Acquire);
         if self.internal_cursor > committed {
@@ -75,5 +87,69 @@ where
         self.increment_cursor();
         self.disruptor.reader_move.notify(usize::MAX);
         Ok(value)
+    }
+
+    pub fn recv(&mut self) -> Result<T, ReaderError> {
+        let immediate = self.try_read_next();
+        match &immediate {
+            Ok(_) => return immediate,
+            Err(err) => match err {
+                ReaderError::NoNewData => {} // this is an expected error here
+            },
+        };
+
+        let listener = self.disruptor.writer_move.listen();
+        // try again as the listener can take some time to be registered and cause us to miss things
+        let immediate = self.try_read_next();
+        match &immediate {
+            Ok(_) => return immediate,
+            Err(err) => match err {
+                ReaderError::NoNewData => {} // this is an expected error here
+            },
+        };
+        listener.wait();
+
+        loop {
+            //TODO this loop shouldn't be needed here. What's going on...
+            let immediate = self.try_read_next();
+            match &immediate {
+                Ok(_) => return immediate,
+                Err(err) => match err {
+                    ReaderError::NoNewData => continue, // this is an expected error here
+                },
+            };
+        }
+    }
+
+    pub async fn async_recv(&mut self) -> Result<T, ReaderError> {
+        let immediate = self.try_read_next();
+        match &immediate {
+            Ok(_) => return immediate,
+            Err(err) => match err {
+                ReaderError::NoNewData => {} // this is an expected error here
+            },
+        };
+
+        let listener = self.disruptor.writer_move.listen();
+        // try again as the listener can take some time to be registered and cause us to miss things
+        let immediate = self.try_read_next();
+        match &immediate {
+            Ok(_) => return immediate,
+            Err(err) => match err {
+                ReaderError::NoNewData => {} // this is an expected error here
+            },
+        };
+        listener.await;
+
+        loop {
+            //TODO this loop shouldn't be needed here. What's going on...
+            let immediate = self.try_read_next();
+            match &immediate {
+                Ok(_) => return immediate,
+                Err(err) => match err {
+                    ReaderError::NoNewData => continue, // this is an expected error here
+                },
+            };
+        }
     }
 }

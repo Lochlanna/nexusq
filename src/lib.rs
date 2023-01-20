@@ -13,16 +13,9 @@ mod tests {
     fn read_n(mut receiver: Receiver<usize>, num_to_read: usize) -> Vec<usize> {
         let mut results = Vec::with_capacity(num_to_read);
         for _ in 0..num_to_read {
-            loop {
-                let v = receiver.try_read_next();
-                match v {
-                    Ok(v) => {
-                        results.push(v);
-                        break;
-                    }
-                    Err(_) => continue,
-                }
-            }
+            let v = receiver.recv();
+            assert!(v.is_ok());
+            results.push(v.unwrap());
         }
         results
     }

@@ -18,6 +18,12 @@ multiqueue = "0.3.2"
 multiqueue2 = "0.1.7"
 
 
+[profile.release]
+lto=true
+codegen-units=1
+incremental=false
+strip=true
+
 [[bench]]
 name = "one_to_one"
 harness = false
