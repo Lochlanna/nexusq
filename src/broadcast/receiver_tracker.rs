@@ -76,9 +76,9 @@ impl ReceiverTracker {
         cell.kill();
     }
 
-    pub fn slowest(&self, limit: isize) -> isize {
+    pub fn slowest(&self, min: isize) -> isize {
         let cached = self.slowest_cache.load(Ordering::Acquire);
-        if cached > limit {
+        if cached > min {
             return cached;
         }
         let read_lock = self.receiver_cells.read();
@@ -90,7 +90,7 @@ impl ReceiverTracker {
                 continue;
             }
             let position = position as isize;
-            if position <= limit {
+            if position <= min {
                 return position as isize;
             }
             if position < slowest {

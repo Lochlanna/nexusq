@@ -10,7 +10,7 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub(crate) struct Core<T> {
     ring: *mut Vec<T>,
-    capacity: usize,
+    capacity: isize,
     claimed: AtomicIsize,
     committed: AtomicIsize,
     // is there a better way than events?
@@ -35,6 +35,7 @@ impl<T> Core<T> {
     pub(crate) fn new(buffer_size: usize) -> Self {
         let mut ring = Box::new(Vec::with_capacity(buffer_size));
         let capacity = ring.capacity();
+        //TODO check that it's not bigger than isize::MAX
         unsafe {
             // use capacity as vec is allowed to allocate more than buffer_size if it likes so
             //we might as well use it!
@@ -45,7 +46,7 @@ impl<T> Core<T> {
 
         Self {
             ring,
-            capacity,
+            capacity: capacity as isize,
             claimed: AtomicIsize::new(0),
             committed: AtomicIsize::new(-1),
             reader_move: Default::default(),

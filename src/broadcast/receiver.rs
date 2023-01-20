@@ -42,6 +42,12 @@ impl<T> From<Arc<Core<T>>> for Receiver<T> {
     }
 }
 
+impl<T> Clone for Receiver<T> {
+    fn clone(&self) -> Self {
+        self.disruptor.clone().into()
+    }
+}
+
 impl<T> Receiver<T> {
     #[inline(always)]
     fn increment_cursor(&mut self) {
@@ -60,7 +66,7 @@ where
         if self.internal_cursor > committed {
             return Err(ReaderError::NoNewData);
         }
-        let index = self.internal_cursor as usize % self.disruptor.capacity;
+        let index = self.internal_cursor as usize % self.disruptor.capacity as usize;
         // the value has been committed so it's safe to read it!
         let value;
         unsafe {

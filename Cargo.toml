@@ -20,3 +20,7 @@ multiqueue2 = "0.1.7"
 [[bench]]
 name = "one_to_one"
 harness = false
+
+[[bench]]
+name = "two_to_two"
+harness = false

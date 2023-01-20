@@ -9,42 +9,79 @@ pub use broadcast::{channel, receiver::Receiver, sender::Sender};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread::spawn;
-    use std::time;
+    use std::thread::{spawn, JoinHandle};
 
-    #[test]
-    fn it_works() {
-        let num = 100000;
-        let (mut sender, mut receiver) = channel(100);
-        let receiver_jh = spawn(move || {
-            let mut values = Vec::with_capacity(num);
-            for _ in 0..num {
-                loop {
-                    let v = receiver.try_read_next();
-                    if v.is_err() {
-                        continue;
+    #[inline(always)]
+    fn read_n(mut receiver: Receiver<usize>, num_to_read: usize) -> Vec<usize> {
+        let mut results = Vec::with_capacity(num_to_read);
+        for _ in 0..num_to_read {
+            loop {
+                let v = receiver.try_read_next();
+                match v {
+                    Ok(v) => {
+                        results.push(v);
+                        break;
                     }
-                    values.push(v.unwrap());
-                    break;
+                    Err(_) => continue,
                 }
             }
-            values
-        });
-        let start = time::Instant::now();
-        for i in 0..num {
+        }
+        results
+    }
+
+    #[inline(always)]
+    fn write_n(mut sender: Sender<usize>, num_to_write: usize) {
+        for i in 0..num_to_write {
             sender.send(i);
         }
-        let res = receiver_jh.join();
-        let time_taken = start.elapsed();
-        assert!(res.is_ok());
-        let expect: Vec<usize> = (0..num).collect();
-        assert_eq!(res.unwrap(), expect);
-        let throughput = num as f64 / time_taken.as_secs_f64();
-        println!(
-            "took {} seconds to send and receive {} values with a throughput of {}/second",
-            time_taken.as_secs_f64(),
-            num,
-            throughput
-        )
+    }
+
+    #[inline(always)]
+    fn test(num_elements: usize, num_writers: usize, num_readers: usize, buffer_size: usize) {
+        let (sender, receiver) = channel(buffer_size);
+        let readers: Vec<JoinHandle<Vec<usize>>> = (0..num_readers)
+            .map(|_| {
+                let new_receiver = receiver.clone();
+                spawn(move || read_n(new_receiver, num_elements))
+            })
+            .collect();
+        drop(receiver);
+        let writers: Vec<JoinHandle<()>> = (0..num_writers)
+            .map(|_| {
+                let new_sender = sender.clone();
+                spawn(move || {
+                    write_n(new_sender, num_elements);
+                })
+            })
+            .collect();
+
+        for writer in writers {
+            let _ = writer.join();
+        }
+        for reader in readers {
+            let res = reader.join();
+            match res {
+                Ok(res) => {
+                    assert_eq!(res.len(), num_elements);
+                    if num_writers == 1 {
+                        let expected: Vec<usize> = (0..num_elements).collect();
+                        assert_eq!(res, expected);
+                    }
+                }
+                Err(_) => panic!("reader didnt' read enough"),
+            }
+        }
+    }
+
+    #[test]
+    fn single_writer_single_reader() {
+        let num = 50;
+        test(num, 1, 1, 10);
+    }
+
+    #[test]
+    fn single_writer_two_reader() {
+        let num = 50000;
+        test(num, 1, 2, 10);
     }
 }
