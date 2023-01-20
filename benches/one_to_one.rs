@@ -2,10 +2,9 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 use nexusq::channel;
 use std::thread::spawn;
-use std::time;
 
 fn nexus(num: usize) {
-    let (sender, mut receiver) = channel(100);
+    let (mut sender, mut receiver) = channel(100);
     let receiver_jh = spawn(move || {
         let mut values = Vec::with_capacity(num);
         for _ in 0..num {
@@ -30,7 +29,7 @@ fn nexus(num: usize) {
 }
 
 fn multiq(num: usize) {
-    let (sender, mut receiver) = multiqueue::broadcast_queue(100);
+    let (sender, receiver) = multiqueue::broadcast_queue(100);
     let receiver_jh = spawn(move || {
         let mut values = Vec::with_capacity(num);
         for _ in 0..num {
@@ -52,7 +51,7 @@ fn multiq(num: usize) {
 }
 
 fn multiq2(num: usize) {
-    let (sender, mut receiver) = multiqueue2::broadcast_queue(100);
+    let (sender, receiver) = multiqueue2::broadcast_queue(100);
     let receiver_jh = spawn(move || {
         let mut values = Vec::with_capacity(num);
         for _ in 0..num {
