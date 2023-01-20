@@ -42,7 +42,7 @@ mod tests {
         let readers: Vec<JoinHandle<Vec<usize>>> = (0..num_readers)
             .map(|_| {
                 let new_receiver = receiver.clone();
-                spawn(move || read_n(new_receiver, num_elements))
+                spawn(move || read_n(new_receiver, num_elements * num_writers))
             })
             .collect();
         drop(receiver);
@@ -62,7 +62,7 @@ mod tests {
             let res = reader.join();
             match res {
                 Ok(res) => {
-                    assert_eq!(res.len(), num_elements);
+                    assert_eq!(res.len(), num_elements * num_writers);
                     if num_writers == 1 {
                         let expected: Vec<usize> = (0..num_elements).collect();
                         assert_eq!(res, expected);
@@ -75,13 +75,19 @@ mod tests {
 
     #[test]
     fn single_writer_single_reader() {
-        let num = 50;
+        let num = 5000;
         test(num, 1, 1, 10);
     }
 
     #[test]
     fn single_writer_two_reader() {
-        let num = 50000;
+        let num = 5000;
         test(num, 1, 2, 10);
+    }
+
+    #[test]
+    fn two_writer_two_reader() {
+        let num = 5000;
+        test(num, 2, 2, 10);
     }
 }
