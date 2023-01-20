@@ -15,7 +15,7 @@ mod tests {
     #[test]
     fn it_works() {
         let num = 100000;
-        let (sender, mut receiver) = channel(100);
+        let (mut sender, mut receiver) = channel(100);
         let receiver_jh = spawn(move || {
             let mut values = Vec::with_capacity(num);
             for _ in 0..num {

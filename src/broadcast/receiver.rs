@@ -1,5 +1,5 @@
 use super::*;
-use std::sync::atomic::Ordering as AOrdering;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -12,34 +12,42 @@ pub enum ReaderError {
 #[derive(Debug)]
 pub struct Receiver<T> {
     disruptor: Arc<Core<T>>,
-    cursor: ReadCursor,
+    internal_cursor: isize,
+    shared_cursor: Arc<AtomicUsize>,
+    shared_cursor_id: usize,
 }
 
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
-        self.disruptor.readers.remove(&self.cursor);
+        self.disruptor
+            .readers
+            .kill_receiver(self.shared_cursor_id, &self.shared_cursor)
     }
 }
 
 impl<T> From<Arc<Core<T>>> for Receiver<T> {
     fn from(disruptor: Arc<Core<T>>) -> Self {
-        let id = disruptor.next_reader_id.fetch_add(1, AOrdering::Release);
-        let cursor = ReadCursor::new(id);
-        disruptor.readers.insert(cursor);
-        Self { disruptor, cursor }
+        let (shared_cursor_id, shared_cursor) = disruptor.readers.new_receiver(
+            disruptor
+                .committed
+                .load(Ordering::Acquire)
+                .clamp(0, isize::MAX),
+        );
+        Self {
+            disruptor,
+            internal_cursor: shared_cursor.load(Ordering::Relaxed) as isize,
+            shared_cursor,
+            shared_cursor_id,
+        }
     }
 }
 
 impl<T> Receiver<T> {
-    #[inline]
+    #[inline(always)]
     fn increment_cursor(&mut self) {
-        // make a copy of our current cursor so that we can remove it later
-        let previous = self.cursor;
-        self.cursor.increment();
-        self.disruptor.readers.insert(self.cursor);
-        // We can only remove the old one once we have the new one in place to prevent a writer from
-        // claiming our new position
-        self.disruptor.readers.remove(&previous);
+        self.internal_cursor += 1;
+        self.shared_cursor
+            .store(self.internal_cursor as usize, Ordering::Release);
     }
 }
 
@@ -48,11 +56,11 @@ where
     T: Clone,
 {
     pub fn try_read_next(&mut self) -> Result<T, ReaderError> {
-        let committed = self.disruptor.committed.load(AOrdering::Acquire);
-        if self.cursor.current_id > committed {
+        let committed = self.disruptor.committed.load(Ordering::Acquire);
+        if self.internal_cursor > committed {
             return Err(ReaderError::NoNewData);
         }
-        let index = self.cursor.current_id as usize % self.disruptor.capacity;
+        let index = self.internal_cursor as usize % self.disruptor.capacity;
         // the value has been committed so it's safe to read it!
         let value;
         unsafe {

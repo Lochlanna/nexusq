@@ -1,6 +1,6 @@
 use super::*;
 use std::mem::forget;
-use std::sync::atomic::Ordering as AOrdering;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -10,51 +10,50 @@ pub enum SenderError {}
 #[derive(Debug)]
 pub struct Sender<T> {
     disruptor: Arc<Core<T>>,
+    cached_slowest_reader: isize,
 }
 
 impl<T> From<Arc<Core<T>>> for Sender<T> {
     fn from(disruptor: Arc<Core<T>>) -> Self {
-        Self { disruptor }
+        Self {
+            disruptor,
+            cached_slowest_reader: -1,
+        }
     }
 }
 
 impl<T> Sender<T> {
     //TODO this can probably be cut down / optimised a bit...
-    fn claim(&self) -> isize {
-        let claimed = self.disruptor.claimed.fetch_add(1, AOrdering::Release);
+    fn claim(&mut self) -> isize {
+        let claimed = self.disruptor.claimed.fetch_add(1, Ordering::Release);
         //TODO we create this every time even though we hopefully wont use it every time
-
-        let mut oldest_reader_id;
-        if let Some(oldest) = self.disruptor.readers.front() {
-            oldest_reader_id = oldest.value().current_id;
-        } else {
-            return claimed;
-        }
 
         let capacity = self.disruptor.capacity as isize;
         let tail = claimed - capacity;
-        while oldest_reader_id <= tail {
+
+        if self.cached_slowest_reader != -1 && self.cached_slowest_reader > tail {
+            return claimed;
+        }
+
+        self.cached_slowest_reader = self.disruptor.readers.slowest(claimed);
+
+        while self.cached_slowest_reader <= tail {
             let listener = self.disruptor.reader_move.listen();
-            if let Some(oldest) = self.disruptor.readers.front() {
-                oldest_reader_id = oldest.value().current_id;
-            } else {
-                return claimed;
-            }
-            if oldest_reader_id > tail {
+            // the reader may have moved before we managed to register the listener so
+            // we need to check again before we wait. If a reader moves between now and when
+            // we call wait it should return immediately
+            self.cached_slowest_reader = self.disruptor.readers.slowest(claimed);
+            if self.cached_slowest_reader > tail {
                 return claimed;
             }
             listener.wait();
-            if let Some(oldest) = self.disruptor.readers.front() {
-                oldest_reader_id = oldest.value().current_id;
-            } else {
-                return claimed;
-            }
+            self.cached_slowest_reader = self.disruptor.readers.slowest(claimed);
         }
         // TODO check if there is another writer writing to a different ID but the same cell.
 
         claimed
     }
-    pub fn send(&self, value: T) {
+    pub fn send(&mut self, value: T) {
         let claimed_id = self.claim();
         let capacity = self.disruptor.capacity;
         let index = claimed_id as usize % capacity;
@@ -70,8 +69,8 @@ impl<T> Sender<T> {
             .compare_exchange_weak(
                 claimed_id - 1,
                 claimed_id,
-                AOrdering::Release,
-                AOrdering::Relaxed,
+                Ordering::Release,
+                Ordering::Relaxed,
             )
             .is_err()
         {}

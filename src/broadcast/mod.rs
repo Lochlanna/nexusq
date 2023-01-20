@@ -1,52 +1,11 @@
-use crossbeam_skiplist::SkipSet;
-use event_listener::Event;
-use std::cmp::Ordering;
-use std::sync::atomic::{AtomicIsize, AtomicUsize};
-use std::sync::Arc;
-
 pub mod receiver;
+mod receiver_tracker;
 pub mod sender;
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]
-struct ReadCursor {
-    reader_id: usize,
-    current_id: isize,
-}
-
-impl ReadCursor {
-    fn new(reader_id: usize) -> Self {
-        Self {
-            reader_id,
-            current_id: 0,
-        }
-    }
-    fn increment(&mut self) {
-        self.current_id += 1;
-    }
-
-    fn reader_id(&self) -> usize {
-        self.reader_id
-    }
-    fn current_id(&self) -> isize {
-        self.current_id
-    }
-}
-
-impl PartialOrd for ReadCursor {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for ReadCursor {
-    fn cmp(&self, other: &Self) -> Ordering {
-        let ord = self.current_id.cmp(&other.current_id);
-        if matches!(ord, Ordering::Equal) {
-            return self.reader_id.cmp(&other.reader_id);
-        }
-        ord
-    }
-}
+use event_listener::Event;
+use receiver_tracker::ReceiverTracker;
+use std::sync::atomic::{AtomicIsize, AtomicUsize};
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub(crate) struct Core<T> {
@@ -54,12 +13,11 @@ pub(crate) struct Core<T> {
     capacity: usize,
     claimed: AtomicIsize,
     committed: AtomicIsize,
-    next_reader_id: AtomicUsize,
     // is there a better way than events?
     reader_move: Event,
     writer_move: Event,
     // Reference to each reader to get their position. It should be sorted(how..?)
-    readers: SkipSet<ReadCursor>,
+    readers: ReceiverTracker,
 }
 
 unsafe impl<T> Send for Core<T> {}
@@ -90,7 +48,6 @@ impl<T> Core<T> {
             capacity,
             claimed: AtomicIsize::new(0),
             committed: AtomicIsize::new(-1),
-            next_reader_id: AtomicUsize::default(),
             reader_move: Default::default(),
             writer_move: Default::default(),
             readers: Default::default(),
