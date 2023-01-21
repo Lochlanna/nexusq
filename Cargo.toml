@@ -22,7 +22,6 @@ multiqueue2 = "0.1.7"
 lto=true
 codegen-units=1
 incremental=false
-strip=true
 
 [[bench]]
 name = "one_to_one"

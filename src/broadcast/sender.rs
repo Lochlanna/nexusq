@@ -5,7 +5,10 @@ use std::sync::Arc;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum SenderError {}
+pub enum SenderError {
+    #[error("placeholder error")]
+    Placeholder,
+}
 
 #[derive(Debug, Clone)]
 pub struct Sender<T> {
@@ -30,14 +33,20 @@ where
     T: Send,
 {
     //TODO this can probably be cut down / optimised a bit...
-    fn claim(&mut self) -> isize {
-        let claimed = self.disruptor.claimed.fetch_add(1, Ordering::Release);
+    fn claim(&mut self, num_to_claim: isize) -> Result<isize, SenderError> {
+        if num_to_claim > self.capacity {
+            return Err(SenderError::Placeholder);
+        }
+        let claimed = self
+            .disruptor
+            .claimed
+            .fetch_add(num_to_claim, Ordering::Release);
         //TODO we create this every time even though we hopefully wont use it every time
 
         let tail = claimed - self.capacity;
 
         if self.cached_slowest_reader != -1 && self.cached_slowest_reader > tail {
-            return claimed;
+            return Ok(claimed);
         }
 
         let mut slowest_reader = self.disruptor.readers.slowest(tail);
@@ -49,7 +58,7 @@ where
             // we call wait it should return immediately
             slowest_reader = self.disruptor.readers.slowest(tail);
             if slowest_reader > tail {
-                return claimed;
+                return Ok(claimed);
             }
             listener.wait();
             slowest_reader = self.disruptor.readers.slowest(tail);
@@ -59,16 +68,23 @@ where
             self.cached_slowest_reader = slowest_reader;
         }
 
-        claimed
+        Ok(claimed)
     }
-    async fn async_claim(&mut self) -> isize {
-        let claimed = self.disruptor.claimed.fetch_add(1, Ordering::Release);
+
+    async fn async_claim(&mut self, num_to_claim: isize) -> Result<isize, SenderError> {
+        if num_to_claim > self.capacity {
+            return Err(SenderError::Placeholder);
+        }
+        let claimed = self
+            .disruptor
+            .claimed
+            .fetch_add(num_to_claim, Ordering::Release);
         //TODO we create this every time even though we hopefully wont use it every time
 
         let tail = claimed - self.capacity;
 
         if self.cached_slowest_reader != -1 && self.cached_slowest_reader > tail {
-            return claimed;
+            return Ok(claimed);
         }
 
         let mut slowest_reader = self.disruptor.readers.slowest(tail);
@@ -80,7 +96,7 @@ where
             // we call wait it should return immediately
             slowest_reader = self.disruptor.readers.slowest(tail);
             if slowest_reader > tail {
-                return claimed;
+                return Ok(claimed);
             }
             listener.await;
             slowest_reader = self.disruptor.readers.slowest(tail);
@@ -90,10 +106,10 @@ where
             self.cached_slowest_reader = slowest_reader;
         }
 
-        claimed
+        Ok(claimed)
     }
-    pub fn send(&mut self, value: T) {
-        let claimed_id = self.claim();
+    pub fn send(&mut self, value: T) -> Result<(), SenderError> {
+        let claimed_id = self.claim(1)?;
         let index = claimed_id as usize % self.capacity as usize;
 
         let old_value;
@@ -122,9 +138,10 @@ where
         } else {
             drop(old_value);
         }
+        Ok(())
     }
-    pub async fn async_send(&mut self, value: T) {
-        let claimed_id = self.async_claim().await;
+    pub async fn async_send(&mut self, value: T) -> Result<(), SenderError> {
+        let claimed_id = self.async_claim(1).await?;
         let index = claimed_id as usize % self.capacity as usize;
 
         let old_value;
@@ -153,5 +170,59 @@ where
         } else {
             drop(old_value);
         }
+        Ok(())
+    }
+
+    pub fn send_batch(&mut self, mut data: Vec<T>) -> Result<(), SenderError> {
+        let total_num = data.len() as isize;
+        let start_id = self.claim(data.len() as isize)?;
+        let start_index = (start_id % self.capacity) as usize;
+        let end_index = start_index + data.len();
+
+        if end_index < self.capacity as usize {
+            unsafe {
+                let target = &mut (*self.disruptor.ring)[start_index..end_index];
+                std::ptr::swap_nonoverlapping(data.as_mut_ptr(), target.as_mut_ptr(), data.len());
+            }
+            if start_id < self.capacity {
+                forget(data.into_boxed_slice());
+            }
+        } else {
+            let mut index = start_index;
+            for value in data {
+                if index < self.capacity as usize {
+                    //forget the old value
+                    unsafe {
+                        let old = std::mem::replace(
+                            &mut (*self.disruptor.ring)[index % self.capacity as usize],
+                            value,
+                        );
+                        forget(old);
+                    }
+                } else {
+                    //drop the old value
+                    unsafe {
+                        (*self.disruptor.ring)[index % self.capacity as usize] = value;
+                    }
+                }
+                index += 1;
+            }
+        }
+
+        while self
+            .disruptor
+            .committed
+            .compare_exchange_weak(
+                start_id - 1,
+                start_id + total_num - 1,
+                Ordering::Release,
+                Ordering::Relaxed,
+            )
+            .is_err()
+        {}
+        // Notify other threads that a value has been written
+        self.disruptor.writer_move.notify(usize::MAX);
+
+        Ok(())
     }
 }
