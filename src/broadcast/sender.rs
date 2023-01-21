@@ -225,4 +225,57 @@ where
 
         Ok(())
     }
+
+    pub async fn async_send_batch(&mut self, mut data: Vec<T>) -> Result<(), SenderError> {
+        let total_num = data.len() as isize;
+        let start_id = self.async_claim(data.len() as isize).await?;
+        let start_index = (start_id % self.capacity) as usize;
+        let end_index = start_index + data.len();
+
+        if end_index < self.capacity as usize {
+            unsafe {
+                let target = &mut (*self.disruptor.ring)[start_index..end_index];
+                std::ptr::swap_nonoverlapping(data.as_mut_ptr(), target.as_mut_ptr(), data.len());
+            }
+            if start_id < self.capacity {
+                forget(data.into_boxed_slice());
+            }
+        } else {
+            let mut index = start_index;
+            for value in data {
+                if index < self.capacity as usize {
+                    //forget the old value
+                    unsafe {
+                        let old = std::mem::replace(
+                            &mut (*self.disruptor.ring)[index % self.capacity as usize],
+                            value,
+                        );
+                        forget(old);
+                    }
+                } else {
+                    //drop the old value
+                    unsafe {
+                        (*self.disruptor.ring)[index % self.capacity as usize] = value;
+                    }
+                }
+                index += 1;
+            }
+        }
+
+        while self
+            .disruptor
+            .committed
+            .compare_exchange_weak(
+                start_id - 1,
+                start_id + total_num - 1,
+                Ordering::Release,
+                Ordering::Relaxed,
+            )
+            .is_err()
+        {}
+        // Notify other threads that a value has been written
+        self.disruptor.writer_move.notify(usize::MAX);
+
+        Ok(())
+    }
 }
