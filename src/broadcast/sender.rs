@@ -279,3 +279,39 @@ where
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod sender_tests {
+    use crate::broadcast::*;
+    #[test]
+    fn batch_write() {
+        let (mut sender, mut receiver) = channel(50);
+        let expected: Vec<i32> = (0..12).collect();
+        sender.send_batch(expected).expect("send failed");
+        let mut result = Vec::new();
+        receiver
+            .batch_recv(&mut result)
+            .expect("receiver was okay!");
+
+        let expected: Vec<i32> = (0..12).collect();
+        assert_eq!(result, expected)
+    }
+
+    #[test]
+    fn batch_write_wrapping() {
+        let (mut sender, mut receiver) = channel(10);
+        sender.send(0).expect("coulnd't send");
+        sender.send(1).expect("coulnd't send");
+        let _ = receiver.recv().expect("couldn't receive");
+        let _ = receiver.recv().expect("couldn't receive");
+        let expected: Vec<i32> = (2..12).collect();
+        sender.send_batch(expected).expect("send failed");
+        let mut result = Vec::new();
+        receiver
+            .batch_recv(&mut result)
+            .expect("receiver was okay!");
+
+        let expected: Vec<i32> = (2..12).collect();
+        assert_eq!(result, expected)
+    }
+}

@@ -205,3 +205,56 @@ where
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod receiver_tests {
+    use crate::broadcast::*;
+    #[test]
+    fn batch_read() {
+        let (mut sender, mut receiver) = channel(10);
+        let expected: Vec<i32> = (0..8).collect();
+        for i in &expected {
+            sender.send(*i).expect("couldn't send");
+        }
+        let mut result = Vec::new();
+        receiver
+            .batch_recv(&mut result)
+            .expect("receiver was okay!");
+
+        assert_eq!(result, expected)
+    }
+
+    #[test]
+    fn batch_read_entire_buffer() {
+        let (mut sender, mut receiver) = channel(10);
+        let expected: Vec<i32> = (0..10).collect();
+        for i in &expected {
+            sender.send(*i).expect("couldn't send");
+        }
+        let mut result = Vec::new();
+        receiver
+            .batch_recv(&mut result)
+            .expect("receiver was okay!");
+
+        assert_eq!(result, expected)
+    }
+
+    #[test]
+    fn wrapping_batch_read() {
+        let (mut sender, mut receiver) = channel(10);
+        for i in 0..10 {
+            sender.send(i).expect("couldn't send");
+        }
+        let _ = receiver.recv();
+        let _ = receiver.recv();
+        sender.send(10).expect("couldn't send");
+        sender.send(11).expect("couldn't send");
+        let expected: Vec<i32> = (2..12).collect();
+        let mut result = Vec::new();
+        receiver
+            .batch_recv(&mut result)
+            .expect("receiver was okay!");
+
+        assert_eq!(result, expected)
+    }
+}

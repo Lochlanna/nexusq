@@ -83,7 +83,7 @@ where
     T: 'static + Clone + Send,
 {
     fn test_send(&mut self, value: T) {
-        self.send(value);
+        self.send(value).expect("couldn't send");
     }
 
     fn another(&self) -> Self {

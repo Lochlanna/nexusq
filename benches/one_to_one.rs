@@ -11,7 +11,7 @@ fn nexus(num: usize) {
         }
     });
     for i in 0..num {
-        sender.send(i);
+        sender.send(i).expect("couldn't send");
     }
     let res = receiver_jh.join();
     assert!(res.is_ok());
