@@ -8,8 +8,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum SenderError {
-    #[error("placeholder error")]
-    Placeholder,
+    #[error("buffer not big enough to accept input")]
+    InputTooLarge,
 }
 
 #[derive(Debug, Clone)]
@@ -21,15 +21,53 @@ impl<T> BroadcastSender<T>
 where
     T: Send,
 {
+    /// Send a single value to the channel. This function will block if there is no space
+    /// available in the channel.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///# use nexusq::channel;
+    ///let (mut sender, mut receiver) = channel(10);
+    ///sender.send(4).expect("couldn't send");
+    ///let result = receiver.try_read_next().expect("couldn't receive");
+    ///assert_eq!(result, 4);
+    /// ```
     pub fn send(&mut self, value: T) -> Result<(), SenderError> {
         self.inner.send(value)
     }
-    pub fn send_batch(&mut self, values: Vec<T>) -> Result<(), SenderError> {
-        self.inner.send_batch(values)
-    }
+    /// Async version of [`BroadcastSender::send`]
     pub async fn async_send(&mut self, value: T) -> Result<(), SenderError> {
         self.inner.async_send(value).await
     }
+    /// Send multiple values to the channel in one call. This function should perform better
+    /// than sending them individually.
+    ///
+    /// This function will block until there is enough space in the channel to send all the values
+    /// at once.
+    ///
+    /// # Arguments
+    ///
+    /// * `values`: A list of values to send to the channel.
+    /// The length of this list must be <= the channel buffer size
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///# use nexusq::channel;
+    ///let (mut sender, mut receiver) = channel(50);
+    ///let expected: Vec<i32> = (0..12).collect();
+    ///sender.send_batch(expected.clone()).expect("batch send failed");
+    ///let mut result = Vec::with_capacity(12);
+    ///receiver
+    ///    .batch_recv(&mut result)
+    ///    .expect("batch receive failed");
+    ///assert_eq!(result, expected)
+    /// ```
+    pub fn send_batch(&mut self, values: Vec<T>) -> Result<(), SenderError> {
+        self.inner.send_batch(values)
+    }
+    /// Async version of [`BroadcastSender::send_batchd`]
     pub async fn async_send_batch(&mut self, values: Vec<T>) -> Result<(), SenderError> {
         self.inner.async_send_batch(values).await
     }
@@ -77,7 +115,7 @@ where
     //TODO this can probably be cut down / optimised a bit...
     fn claim(&mut self, num_to_claim: isize) -> Result<isize, SenderError> {
         if num_to_claim > self.capacity {
-            return Err(SenderError::Placeholder);
+            return Err(SenderError::InputTooLarge);
         }
         let claimed = self
             .disruptor
@@ -113,7 +151,7 @@ where
 
     async fn async_claim(&mut self, num_to_claim: isize) -> Result<isize, SenderError> {
         if num_to_claim > self.capacity {
-            return Err(SenderError::Placeholder);
+            return Err(SenderError::InputTooLarge);
         }
         let claimed = self
             .disruptor
