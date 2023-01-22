@@ -62,7 +62,8 @@ where
 
 pub fn channel<T>(size: usize) -> (sender::BroadcastSender<T>, receiver::Receiver<T>) {
     let core = Arc::new(Core::new(size));
-    let sender = sender::BroadcastSender::from(core.clone());
+    let inner_sender = sender::Sender::from(core.clone());
+    let sender = sender::BroadcastSender::from(inner_sender);
     let receiver = receiver::Receiver::from(core);
     (sender, receiver)
 }

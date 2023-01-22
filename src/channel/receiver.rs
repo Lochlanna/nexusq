@@ -16,7 +16,7 @@ pub struct Receiver<T> {
     disruptor: Arc<Core<T, BroadcastTracker>>,
     internal_cursor: isize,
     shared_cursor: Arc<AtomicUsize>,
-    shared_cursor_id: usize,
+    shared_cursor_token: usize,
     capacity: isize,
 }
 
@@ -24,7 +24,7 @@ impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
         self.disruptor
             .readers
-            .remove_receiver(self.shared_cursor_id, &self.shared_cursor)
+            .remove_receiver(self.shared_cursor_token, &self.shared_cursor)
     }
 }
 
@@ -41,7 +41,7 @@ impl<T> From<Arc<Core<T, BroadcastTracker>>> for Receiver<T> {
             disruptor,
             internal_cursor: shared_cursor.load(Ordering::Relaxed) as isize,
             shared_cursor,
-            shared_cursor_id,
+            shared_cursor_token: shared_cursor_id,
             capacity,
         }
     }
@@ -56,7 +56,7 @@ impl<T> Clone for Receiver<T> {
             disruptor: self.disruptor.clone(),
             internal_cursor: shared_cursor.load(Ordering::Relaxed) as isize,
             shared_cursor,
-            shared_cursor_id,
+            shared_cursor_token: shared_cursor_id,
             capacity: self.capacity,
         }
     }

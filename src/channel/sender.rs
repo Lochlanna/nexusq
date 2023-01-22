@@ -12,10 +12,37 @@ pub enum SenderError {
     Placeholder,
 }
 
-pub type BroadcastSender<T> = Sender<T, BroadcastTracker>;
+#[derive(Debug, Clone)]
+pub struct BroadcastSender<T> {
+    inner: Sender<T, BroadcastTracker>,
+}
+
+impl<T> BroadcastSender<T>
+where
+    T: Send,
+{
+    pub fn send(&mut self, value: T) -> Result<(), SenderError> {
+        self.inner.send(value)
+    }
+    pub fn send_batch(&mut self, values: Vec<T>) -> Result<(), SenderError> {
+        self.inner.send_batch(values)
+    }
+    pub async fn async_send(&mut self, value: T) -> Result<(), SenderError> {
+        self.inner.async_send(value).await
+    }
+    pub async fn async_send_batch(&mut self, values: Vec<T>) -> Result<(), SenderError> {
+        self.inner.async_send_batch(values).await
+    }
+}
+
+impl<T> From<Sender<T, BroadcastTracker>> for BroadcastSender<T> {
+    fn from(sender: Sender<T, BroadcastTracker>) -> Self {
+        Self { inner: sender }
+    }
+}
 
 #[derive(Debug)]
-pub struct Sender<T, TR> {
+pub(crate) struct Sender<T, TR> {
     disruptor: Arc<Core<T, TR>>,
     capacity: isize,
     cached_slowest_reader: isize,
