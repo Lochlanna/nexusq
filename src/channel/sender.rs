@@ -1,4 +1,5 @@
 use super::*;
+use crate::channel::tracker::Tracker;
 use std::mem::forget;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -286,7 +287,7 @@ where
 
 #[cfg(test)]
 mod sender_tests {
-    use crate::broadcast::*;
+    use crate::channel::*;
     #[test]
     fn batch_write() {
         let (mut sender, mut receiver) = channel(50);

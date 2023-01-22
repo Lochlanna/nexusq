@@ -1,4 +1,5 @@
 use super::*;
+use crate::channel::tracker::Tracker;
 use core::slice;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -23,7 +24,7 @@ impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
         self.disruptor
             .readers
-            .kill_receiver(self.shared_cursor_id, &self.shared_cursor)
+            .remove_receiver(self.shared_cursor_id, &self.shared_cursor)
     }
 }
 
@@ -208,7 +209,7 @@ where
 
 #[cfg(test)]
 mod receiver_tests {
-    use crate::broadcast::*;
+    use crate::channel::*;
     #[test]
     fn batch_read() {
         let (mut sender, mut receiver) = channel(10);

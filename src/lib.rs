@@ -2,6 +2,6 @@
 
 extern crate core;
 
-mod broadcast;
+mod channel;
 
-pub use broadcast::{channel, receiver::Receiver, sender::Sender};
+pub use channel::{channel, receiver::Receiver, sender::Sender};

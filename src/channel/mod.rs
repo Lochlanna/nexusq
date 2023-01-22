@@ -1,12 +1,12 @@
 pub mod receiver;
-mod receiver_tracker;
 pub mod sender;
+mod tracker;
 
 use crossbeam_utils::CachePadded;
 use event_listener::Event;
-use receiver_tracker::ReceiverTracker;
 use std::sync::atomic::{AtomicIsize, AtomicUsize};
 use std::sync::Arc;
+use tracker::BroadcastTracker;
 
 #[derive(Debug)]
 pub(crate) struct Core<T> {
@@ -18,7 +18,7 @@ pub(crate) struct Core<T> {
     reader_move: Event,
     writer_move: Event,
     // Reference to each reader to get their position. It should be sorted(how..?)
-    readers: ReceiverTracker,
+    readers: BroadcastTracker,
 }
 
 unsafe impl<T> Send for Core<T> {}

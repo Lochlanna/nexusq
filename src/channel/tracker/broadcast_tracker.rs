@@ -2,49 +2,53 @@ use std::collections::LinkedList;
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-const DEAD_CELL: usize = (isize::MAX as usize) + 1;
+use super::Tracker;
+
+const UNUSED: usize = (isize::MAX as usize) + 1;
 
 trait Cell {
-    fn kill(&self);
-    fn is_dead(&self) -> bool;
+    fn set_as_unused(&self);
+    fn is_unused(&self) -> bool;
 }
 
 impl Cell for AtomicUsize {
-    fn kill(&self) {
-        self.store(DEAD_CELL, Ordering::Release);
+    fn set_as_unused(&self) {
+        self.store(UNUSED, Ordering::Release);
     }
-    fn is_dead(&self) -> bool {
-        self.load(Ordering::Acquire) == DEAD_CELL
+    fn is_unused(&self) -> bool {
+        self.load(Ordering::Acquire) == UNUSED
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct ReceiverTracker {
+pub(crate) struct BroadcastTracker {
     // Access will always be write so no need for a more complex read write lock here.
     // It shouldn't be accessed too much and should only impede new/dying receivers not active
     // senders or receivers
-    dead_cells: parking_lot::Mutex<LinkedList<usize>>,
+    unused_cells: parking_lot::Mutex<LinkedList<usize>>,
     receiver_cells: parking_lot::RwLock<Vec<Arc<AtomicUsize>>>,
     slowest_cache: AtomicIsize,
 }
 
-impl Default for ReceiverTracker {
+impl Default for BroadcastTracker {
     fn default() -> Self {
         Self {
-            dead_cells: Default::default(),
+            unused_cells: Default::default(),
             receiver_cells: Default::default(),
             slowest_cache: AtomicIsize::new(-1),
         }
     }
 }
 
-impl ReceiverTracker {
-    pub fn new_receiver(&self, at: isize) -> (usize, Arc<AtomicUsize>) {
+impl Tracker for BroadcastTracker {
+    type Token = usize;
+
+    fn new_receiver(&self, at: isize) -> (Self::Token, Arc<AtomicUsize>) {
         let at = at as usize;
         //check for and claim an existing dead cell first
         let dead_idx;
         {
-            let mut lock = self.dead_cells.lock();
+            let mut lock = self.unused_cells.lock();
             dead_idx = lock.pop_front();
         }
 
@@ -67,16 +71,15 @@ impl ReceiverTracker {
         }
     }
 
-    pub fn kill_receiver(&self, index: usize, cell: &Arc<AtomicUsize>) {
+    fn remove_receiver(&self, token: Self::Token, cell: &Arc<AtomicUsize>) {
         {
-            //
-            let mut lock = self.dead_cells.lock();
-            lock.push_back(index);
+            let mut lock = self.unused_cells.lock();
+            lock.push_back(token);
         }
-        cell.kill();
+        cell.set_as_unused();
     }
 
-    pub fn slowest(&self, min: isize) -> isize {
+    fn slowest(&self, min: isize) -> isize {
         let cached = self.slowest_cache.load(Ordering::Acquire);
         if cached > min {
             return cached;
@@ -86,7 +89,7 @@ impl ReceiverTracker {
         for cell in read_lock.iter() {
             //TODO Can we actually use relaxed here?
             let position = cell.load(Ordering::Relaxed);
-            if position == DEAD_CELL {
+            if position == UNUSED {
                 continue;
             }
             let position = position as isize;
@@ -109,16 +112,16 @@ mod tracker_tests {
 
     #[test]
     fn add_remove_recover() {
-        let tracker = ReceiverTracker::default();
+        let tracker = BroadcastTracker::default();
         let (receiver_idx, shared_cursor_a) = tracker.new_receiver(4);
         assert_eq!(receiver_idx, 0);
         assert_eq!(shared_cursor_a.load(Ordering::Acquire), 4);
         let (receiver_idx, shared_cursor) = tracker.new_receiver(6);
         assert_eq!(receiver_idx, 1);
         assert_eq!(shared_cursor.load(Ordering::Acquire), 6);
-        tracker.kill_receiver(0, &shared_cursor_a);
-        assert_eq!(shared_cursor_a.load(Ordering::Acquire), DEAD_CELL);
-        assert!(shared_cursor_a.is_dead()); // same as previous check just checks the function
+        tracker.remove_receiver(0, &shared_cursor_a);
+        assert_eq!(shared_cursor_a.load(Ordering::Acquire), UNUSED);
+        assert!(shared_cursor_a.is_unused()); // same as previous check just checks the function
         let (receiver_idx, shared_cursor) = tracker.new_receiver(7);
         assert_eq!(receiver_idx, 0);
         assert_eq!(shared_cursor.load(Ordering::Acquire), 7);
@@ -126,7 +129,7 @@ mod tracker_tests {
 
     #[test]
     fn slowest() {
-        let tracker = ReceiverTracker::default();
+        let tracker = BroadcastTracker::default();
         let _ = tracker.new_receiver(4);
         let _ = tracker.new_receiver(6);
         let slowest = tracker.slowest(7);
