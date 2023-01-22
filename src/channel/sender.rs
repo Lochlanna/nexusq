@@ -8,6 +8,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum SenderError {
+    /// The given input is too large to fit in the buffered channel
     #[error("buffer not big enough to accept input")]
     InputTooLarge,
 }
@@ -67,7 +68,7 @@ where
     pub fn send_batch(&mut self, values: Vec<T>) -> Result<(), SenderError> {
         self.inner.send_batch(values)
     }
-    /// Async version of [`BroadcastSender::send_batchd`]
+    /// Async version of [`BroadcastSender::send_batch`]
     pub async fn async_send_batch(&mut self, values: Vec<T>) -> Result<(), SenderError> {
         self.inner.async_send_batch(values).await
     }
@@ -248,6 +249,7 @@ where
                 forget(data.into_boxed_slice());
             }
         } else {
+            //TODO surely there's a better way
             let mut index = start_index;
             for value in data {
                 if index < self.capacity as usize {

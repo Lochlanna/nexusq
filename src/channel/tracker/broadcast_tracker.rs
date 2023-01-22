@@ -1,4 +1,6 @@
 use std::collections::LinkedList;
+use std::mem;
+use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -25,7 +27,7 @@ pub struct BroadcastTracker {
     // Access will always be write so no need for a more complex read write lock here.
     // It shouldn't be accessed too much and should only impede new/dying receivers not active
     // senders or receivers
-    unused_cells: parking_lot::Mutex<LinkedList<usize>>,
+    unused_cells: parking_lot::Mutex<LinkedList<Arc<AtomicUsize>>>,
     receiver_cells: parking_lot::RwLock<Vec<Arc<AtomicUsize>>>,
     slowest_cache: AtomicIsize,
 }
@@ -41,24 +43,17 @@ impl Default for BroadcastTracker {
 }
 
 impl Tracker for BroadcastTracker {
-    type Token = usize;
-
-    fn new_receiver(&self, at: isize) -> (Self::Token, Arc<AtomicUsize>) {
+    fn new_receiver(&self, at: isize) -> Arc<AtomicUsize> {
         let at = at as usize;
         //check for and claim an existing dead cell first
-        let dead_idx;
+        let unused_cell;
         {
             let mut lock = self.unused_cells.lock();
-            dead_idx = lock.pop_front();
+            unused_cell = lock.pop_front();
         }
-
-        if let Some(dead_idx) = dead_idx {
-            // There is an existing dead slot that we should re-use
-            let read_lock = self.receiver_cells.read();
-            //TODO remove this expect
-            let cell = read_lock.get(dead_idx).expect("couldn't get cell");
-            cell.store(at, Ordering::Release);
-            return (dead_idx, cell.clone());
+        if let Some(unused_cell) = unused_cell {
+            unused_cell.store(at, Ordering::Release);
+            return unused_cell;
         }
 
         // There are no available slots so we will have to create a new cell
@@ -67,16 +62,17 @@ impl Tracker for BroadcastTracker {
         {
             let mut write_lock = self.receiver_cells.write();
             write_lock.push(new_cell);
-            (write_lock.len() - 1, cloned_new_cell)
         }
+        cloned_new_cell
     }
 
-    fn remove_receiver(&self, token: Self::Token, cell: &Arc<AtomicUsize>) {
+    fn remove_receiver(&self, cell: &Arc<AtomicUsize>) {
+        let cloned_cell = cell.clone();
+        cell.set_as_unused();
         {
             let mut lock = self.unused_cells.lock();
-            lock.push_back(token);
+            lock.push_back(cloned_cell);
         }
-        cell.set_as_unused();
     }
 
     fn slowest(&self, min: isize) -> isize {
@@ -104,6 +100,18 @@ impl Tracker for BroadcastTracker {
         self.slowest_cache.store(slowest, Ordering::Release);
         slowest
     }
+
+    fn tidy(&self) {
+        let mut unused_cell_lock = self.unused_cells.lock();
+        unused_cell_lock.clear();
+        let mut cell_write_lock = self.receiver_cells.write();
+        cell_write_lock.retain(|v| !v.is_unused());
+    }
+
+    fn garbage_count(&self) -> usize {
+        let unused_cell_lock = self.unused_cells.lock();
+        unused_cell_lock.len()
+    }
 }
 
 #[cfg(test)]
@@ -113,17 +121,14 @@ mod tracker_tests {
     #[test]
     fn add_remove_recover() {
         let tracker = BroadcastTracker::default();
-        let (receiver_idx, shared_cursor_a) = tracker.new_receiver(4);
-        assert_eq!(receiver_idx, 0);
+        let shared_cursor_a = tracker.new_receiver(4);
         assert_eq!(shared_cursor_a.load(Ordering::Acquire), 4);
-        let (receiver_idx, shared_cursor) = tracker.new_receiver(6);
-        assert_eq!(receiver_idx, 1);
+        let shared_cursor = tracker.new_receiver(6);
         assert_eq!(shared_cursor.load(Ordering::Acquire), 6);
-        tracker.remove_receiver(0, &shared_cursor_a);
+        tracker.remove_receiver(&shared_cursor_a);
         assert_eq!(shared_cursor_a.load(Ordering::Acquire), UNUSED);
         assert!(shared_cursor_a.is_unused()); // same as previous check just checks the function
-        let (receiver_idx, shared_cursor) = tracker.new_receiver(7);
-        assert_eq!(receiver_idx, 0);
+        let shared_cursor = tracker.new_receiver(7);
         assert_eq!(shared_cursor.load(Ordering::Acquire), 7);
     }
 

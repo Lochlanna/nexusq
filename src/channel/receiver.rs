@@ -7,9 +7,11 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ReaderError {
+    /// There is nothing new to be read from the channel
     #[error("there is no unread data on the channel")]
     NoNewData,
-    #[error("the destination for reads doesn't have enough remaining capacity")]
+    /// The given destination vector is already full
+    #[error("the destination for reads doesn't have remaining capacity")]
     DestinationFull,
 }
 
@@ -100,7 +102,6 @@ pub(crate) struct Receiver<T, TR: Tracker> {
     disruptor: Arc<Core<T, TR>>,
     internal_cursor: isize,
     shared_cursor: Arc<AtomicUsize>,
-    shared_cursor_token: TR::Token,
     capacity: isize,
 }
 
@@ -109,9 +110,7 @@ where
     TR: Tracker,
 {
     fn drop(&mut self) {
-        self.disruptor
-            .readers
-            .remove_receiver(self.shared_cursor_token.clone(), &self.shared_cursor)
+        self.disruptor.readers.remove_receiver(&self.shared_cursor)
     }
 }
 
@@ -120,7 +119,7 @@ where
     TR: Tracker,
 {
     fn from(disruptor: Arc<Core<T, TR>>) -> Self {
-        let (shared_cursor_id, shared_cursor) = disruptor.readers.new_receiver(
+        let shared_cursor = disruptor.readers.new_receiver(
             disruptor
                 .committed
                 .load(Ordering::Acquire)
@@ -131,7 +130,6 @@ where
             disruptor,
             internal_cursor: shared_cursor.load(Ordering::Relaxed) as isize,
             shared_cursor,
-            shared_cursor_token: shared_cursor_id,
             capacity,
         }
     }
@@ -143,13 +141,11 @@ where
 {
     /// Creates a new receiver at the same point in the stream
     fn clone(&self) -> Self {
-        let (shared_cursor_id, shared_cursor) =
-            self.disruptor.readers.new_receiver(self.internal_cursor);
+        let shared_cursor = self.disruptor.readers.new_receiver(self.internal_cursor);
         Self {
             disruptor: self.disruptor.clone(),
             internal_cursor: shared_cursor.load(Ordering::Relaxed) as isize,
             shared_cursor,
-            shared_cursor_token: shared_cursor_id,
             capacity: self.capacity,
         }
     }
