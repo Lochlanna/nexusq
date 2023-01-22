@@ -1,6 +1,4 @@
 use std::collections::LinkedList;
-use std::mem;
-use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -66,12 +64,11 @@ impl Tracker for BroadcastTracker {
         cloned_new_cell
     }
 
-    fn remove_receiver(&self, cell: &Arc<AtomicUsize>) {
-        let cloned_cell = cell.clone();
+    fn remove_receiver(&self, cell: Arc<AtomicUsize>) {
         cell.set_as_unused();
         {
             let mut lock = self.unused_cells.lock();
-            lock.push_back(cloned_cell);
+            lock.push_back(cell);
         }
     }
 
@@ -125,7 +122,7 @@ mod tracker_tests {
         assert_eq!(shared_cursor_a.load(Ordering::Acquire), 4);
         let shared_cursor = tracker.new_receiver(6);
         assert_eq!(shared_cursor.load(Ordering::Acquire), 6);
-        tracker.remove_receiver(&shared_cursor_a);
+        tracker.remove_receiver(shared_cursor_a.clone());
         assert_eq!(shared_cursor_a.load(Ordering::Acquire), UNUSED);
         assert!(shared_cursor_a.is_unused()); // same as previous check just checks the function
         let shared_cursor = tracker.new_receiver(7);

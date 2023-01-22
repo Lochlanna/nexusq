@@ -1,6 +1,7 @@
 use super::*;
 use crate::channel::tracker::Tracker;
 use core::slice;
+use std::mem::ManuallyDrop;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use thiserror::Error;
@@ -101,7 +102,7 @@ where
 pub(crate) struct Receiver<T, TR: Tracker> {
     disruptor: Arc<Core<T, TR>>,
     internal_cursor: isize,
-    shared_cursor: Arc<AtomicUsize>,
+    shared_cursor: ManuallyDrop<Arc<AtomicUsize>>,
     capacity: isize,
 }
 
@@ -110,7 +111,10 @@ where
     TR: Tracker,
 {
     fn drop(&mut self) {
-        self.disruptor.readers.remove_receiver(&self.shared_cursor)
+        unsafe {
+            let shared_cursor = ManuallyDrop::take(&mut self.shared_cursor);
+            self.disruptor.readers.remove_receiver(shared_cursor)
+        }
     }
 }
 
@@ -119,11 +123,13 @@ where
     TR: Tracker,
 {
     fn from(disruptor: Arc<Core<T, TR>>) -> Self {
-        let shared_cursor = disruptor.readers.new_receiver(
-            disruptor
-                .committed
-                .load(Ordering::Acquire)
-                .clamp(0, isize::MAX),
+        let shared_cursor = ManuallyDrop::new(
+            disruptor.readers.new_receiver(
+                disruptor
+                    .committed
+                    .load(Ordering::Acquire)
+                    .clamp(0, isize::MAX),
+            ),
         );
         let capacity = disruptor.capacity;
         Self {
@@ -141,7 +147,8 @@ where
 {
     /// Creates a new receiver at the same point in the stream
     fn clone(&self) -> Self {
-        let shared_cursor = self.disruptor.readers.new_receiver(self.internal_cursor);
+        let shared_cursor =
+            ManuallyDrop::new(self.disruptor.readers.new_receiver(self.internal_cursor));
         Self {
             disruptor: self.disruptor.clone(),
             internal_cursor: shared_cursor.load(Ordering::Relaxed) as isize,
