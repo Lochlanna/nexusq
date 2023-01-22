@@ -131,6 +131,16 @@ mod tests {
     }
 
     #[test]
+    fn single_writer_single_reader_clone() {
+        let (mut sender, mut receiver) = channel(10);
+        sender
+            .send("hello world".to_string())
+            .expect("couldn't send");
+        let res = receiver.recv().expect("couldn't read");
+        assert_eq!(res, "hello world");
+    }
+
+    #[test]
     fn single_writer_two_reader() {
         let num = 5000;
         test(num, 1, 2, 10);

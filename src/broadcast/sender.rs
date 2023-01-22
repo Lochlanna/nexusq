@@ -113,7 +113,9 @@ where
         let index = claimed_id as usize % self.capacity as usize;
 
         let old_value;
-        unsafe { old_value = std::mem::replace(&mut (*self.disruptor.ring)[index], value) }
+        unsafe {
+            old_value = std::mem::replace((*self.disruptor.ring).get_unchecked_mut(index), value)
+        }
 
         // TODO what's the optimisation here
         // wait for writers to catch up and commit their transactions
@@ -145,7 +147,9 @@ where
         let index = claimed_id as usize % self.capacity as usize;
 
         let old_value;
-        unsafe { old_value = std::mem::replace(&mut (*self.disruptor.ring)[index], value) }
+        unsafe {
+            old_value = std::mem::replace((*self.disruptor.ring).get_unchecked_mut(index), value)
+        }
 
         // TODO what's the optimisation here
         // wait for writers to catch up and commit their transactions
@@ -300,8 +304,8 @@ mod sender_tests {
     #[test]
     fn batch_write_wrapping() {
         let (mut sender, mut receiver) = channel(10);
-        sender.send(0).expect("coulnd't send");
-        sender.send(1).expect("coulnd't send");
+        sender.send(0).expect("couldn't send");
+        sender.send(1).expect("couldn't send");
         let _ = receiver.recv().expect("couldn't receive");
         let _ = receiver.recv().expect("couldn't receive");
         let expected: Vec<i32> = (2..12).collect();
