@@ -21,7 +21,7 @@ impl Cell for AtomicUsize {
 }
 
 #[derive(Debug)]
-pub(crate) struct BroadcastTracker {
+pub struct BroadcastTracker {
     // Access will always be write so no need for a more complex read write lock here.
     // It shouldn't be accessed too much and should only impede new/dying receivers not active
     // senders or receivers

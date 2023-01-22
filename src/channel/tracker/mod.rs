@@ -1,11 +1,9 @@
-mod broadcast_tracker;
+pub mod broadcast_tracker;
 
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
-pub(crate) use broadcast_tracker::*;
-
-pub(crate) trait Tracker {
+pub trait Tracker {
     type Token;
     fn new_receiver(&self, at: isize) -> (Self::Token, Arc<AtomicUsize>);
     //TODO better name for cell?

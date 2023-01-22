@@ -1,4 +1,5 @@
 use super::*;
+use crate::channel::tracker::broadcast_tracker::BroadcastTracker;
 use crate::channel::tracker::Tracker;
 use std::mem::forget;
 use std::sync::atomic::Ordering;
@@ -11,15 +12,27 @@ pub enum SenderError {
     Placeholder,
 }
 
-#[derive(Debug, Clone)]
-pub struct Sender<T> {
-    disruptor: Arc<Core<T>>,
+pub type BroadcastSender<T> = Sender<T, BroadcastTracker>;
+
+#[derive(Debug)]
+pub struct Sender<T, TR> {
+    disruptor: Arc<Core<T, TR>>,
     capacity: isize,
     cached_slowest_reader: isize,
 }
 
-impl<T> From<Arc<Core<T>>> for Sender<T> {
-    fn from(disruptor: Arc<Core<T>>) -> Self {
+impl<T, TR> Clone for Sender<T, TR> {
+    fn clone(&self) -> Self {
+        Self {
+            disruptor: self.disruptor.clone(),
+            capacity: self.capacity,
+            cached_slowest_reader: self.cached_slowest_reader,
+        }
+    }
+}
+
+impl<T, TR> From<Arc<Core<T, TR>>> for Sender<T, TR> {
+    fn from(disruptor: Arc<Core<T, TR>>) -> Self {
         let capacity = disruptor.capacity;
         Self {
             disruptor,
@@ -29,9 +42,10 @@ impl<T> From<Arc<Core<T>>> for Sender<T> {
     }
 }
 
-impl<T> Sender<T>
+impl<T, TR> Sender<T, TR>
 where
     T: Send,
+    TR: Tracker,
 {
     //TODO this can probably be cut down / optimised a bit...
     fn claim(&mut self, num_to_claim: isize) -> Result<isize, SenderError> {

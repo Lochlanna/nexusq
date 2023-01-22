@@ -4,4 +4,4 @@ extern crate core;
 
 mod channel;
 
-pub use channel::{channel, receiver::Receiver, sender::Sender};
+pub use channel::{channel, receiver::Receiver, sender::BroadcastSender};

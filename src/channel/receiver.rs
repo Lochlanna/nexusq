@@ -13,7 +13,7 @@ pub enum ReaderError {
 
 #[derive(Debug)]
 pub struct Receiver<T> {
-    disruptor: Arc<Core<T>>,
+    disruptor: Arc<Core<T, BroadcastTracker>>,
     internal_cursor: isize,
     shared_cursor: Arc<AtomicUsize>,
     shared_cursor_id: usize,
@@ -28,8 +28,8 @@ impl<T> Drop for Receiver<T> {
     }
 }
 
-impl<T> From<Arc<Core<T>>> for Receiver<T> {
-    fn from(disruptor: Arc<Core<T>>) -> Self {
+impl<T> From<Arc<Core<T, BroadcastTracker>>> for Receiver<T> {
+    fn from(disruptor: Arc<Core<T, BroadcastTracker>>) -> Self {
         let (shared_cursor_id, shared_cursor) = disruptor.readers.new_receiver(
             disruptor
                 .committed

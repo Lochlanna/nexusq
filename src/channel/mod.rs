@@ -1,15 +1,15 @@
 pub mod receiver;
 pub mod sender;
-mod tracker;
+pub mod tracker;
 
 use crossbeam_utils::CachePadded;
 use event_listener::Event;
 use std::sync::atomic::{AtomicIsize, AtomicUsize};
 use std::sync::Arc;
-use tracker::BroadcastTracker;
+use tracker::broadcast_tracker::BroadcastTracker;
 
 #[derive(Debug)]
-pub(crate) struct Core<T> {
+pub(crate) struct Core<T, TR> {
     ring: *mut Vec<T>,
     capacity: isize,
     claimed: CachePadded<AtomicIsize>,
@@ -18,13 +18,13 @@ pub(crate) struct Core<T> {
     reader_move: Event,
     writer_move: Event,
     // Reference to each reader to get their position. It should be sorted(how..?)
-    readers: BroadcastTracker,
+    readers: TR,
 }
 
-unsafe impl<T> Send for Core<T> {}
-unsafe impl<T> Sync for Core<T> {}
+unsafe impl<T, TR> Send for Core<T, TR> {}
+unsafe impl<T, TR> Sync for Core<T, TR> {}
 
-impl<T> Drop for Core<T> {
+impl<T, TR> Drop for Core<T, TR> {
     fn drop(&mut self) {
         unsafe {
             drop(Box::from_raw(self.ring));
@@ -32,7 +32,10 @@ impl<T> Drop for Core<T> {
     }
 }
 
-impl<T> Core<T> {
+impl<T, TR> Core<T, TR>
+where
+    TR: Default,
+{
     pub(crate) fn new(buffer_size: usize) -> Self {
         let mut ring = Box::new(Vec::with_capacity(buffer_size));
         let capacity = ring.capacity();
@@ -57,9 +60,9 @@ impl<T> Core<T> {
     }
 }
 
-pub fn channel<T>(size: usize) -> (sender::Sender<T>, receiver::Receiver<T>) {
+pub fn channel<T>(size: usize) -> (sender::BroadcastSender<T>, receiver::Receiver<T>) {
     let core = Arc::new(Core::new(size));
-    let sender = sender::Sender::from(core.clone());
+    let sender = sender::BroadcastSender::from(core.clone());
     let receiver = receiver::Receiver::from(core);
     (sender, receiver)
 }
@@ -81,7 +84,7 @@ mod tests {
     }
 
     #[inline(always)]
-    fn write_n(mut sender: sender::Sender<usize>, num_to_write: usize) {
+    fn write_n(mut sender: sender::BroadcastSender<usize>, num_to_write: usize) {
         for i in 0..num_to_write {
             sender.send(i).expect("couldn't send");
         }

@@ -78,7 +78,7 @@ trait TestSender<T>: Send + 'static {
     fn another(&self) -> Self;
 }
 
-impl<T> TestSender<T> for nexusq::Sender<T>
+impl<T> TestSender<T> for nexusq::BroadcastSender<T>
 where
     T: 'static + Clone + Send,
 {
