@@ -8,6 +8,7 @@ pub trait Tracker {
     //TODO better name for cell?
     fn remove_receiver(&self, cell: Arc<AtomicUsize>);
     fn slowest(&self, min: isize) -> isize;
+    /// Runs the tracker garbage collection
     fn tidy(&self);
     fn garbage_count(&self) -> usize;
 }

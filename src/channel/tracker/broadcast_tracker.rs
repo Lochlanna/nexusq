@@ -7,14 +7,21 @@ use super::Tracker;
 const UNUSED: usize = (isize::MAX as usize) + 1;
 
 trait Cell {
-    fn set_as_unused(&self);
+    fn set_unused(&self);
+    fn set(&self, value: usize);
     fn is_unused(&self) -> bool;
 }
 
 impl Cell for AtomicUsize {
-    fn set_as_unused(&self) {
+    #[inline(always)]
+    fn set_unused(&self) {
         self.store(UNUSED, Ordering::Release);
     }
+    #[inline(always)]
+    fn set(&self, value: usize) {
+        self.store(value, Ordering::Release);
+    }
+    #[inline(always)]
     fn is_unused(&self) -> bool {
         self.load(Ordering::Acquire) == UNUSED
     }
@@ -50,7 +57,7 @@ impl Tracker for BroadcastTracker {
             unused_cell = lock.pop_front();
         }
         if let Some(unused_cell) = unused_cell {
-            unused_cell.store(at, Ordering::Release);
+            unused_cell.set(at);
             return unused_cell;
         }
 
@@ -65,7 +72,7 @@ impl Tracker for BroadcastTracker {
     }
 
     fn remove_receiver(&self, cell: Arc<AtomicUsize>) {
-        cell.set_as_unused();
+        cell.set_unused();
         {
             let mut lock = self.unused_cells.lock();
             lock.push_back(cell);
