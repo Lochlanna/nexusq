@@ -83,8 +83,6 @@ where
             .disruptor
             .claimed
             .fetch_add(num_to_claim, Ordering::Release);
-        //TODO we create this every time even though we hopefully wont use it every time
-
         let tail = claimed - self.capacity;
 
         if self.cached_slowest_reader != -1 && self.cached_slowest_reader > tail {
@@ -121,8 +119,6 @@ where
             .disruptor
             .claimed
             .fetch_add(num_to_claim, Ordering::Release);
-        //TODO we create this every time even though we hopefully wont use it every time
-
         let tail = claimed - self.capacity;
 
         if self.cached_slowest_reader != -1 && self.cached_slowest_reader > tail {
@@ -152,40 +148,16 @@ where
     }
     pub fn send(&mut self, value: T) -> Result<(), SenderError> {
         let claimed_id = self.claim(1)?;
-        let index = claimed_id as usize % self.capacity as usize;
-
-        let old_value;
-        unsafe {
-            old_value = std::mem::replace((*self.disruptor.ring).get_unchecked_mut(index), value)
-        }
-
-        // TODO what's the optimisation here
-        // wait for writers to catch up and commit their transactions
-        while self
-            .disruptor
-            .committed
-            .compare_exchange_weak(
-                claimed_id - 1,
-                claimed_id,
-                Ordering::Release,
-                Ordering::Relaxed,
-            )
-            .is_err()
-        {}
-        // Notify other threads that a value has been written
-        self.disruptor.writer_move.notify(usize::MAX);
-
-        // We do this at the end to ensure that we're not worrying about wierd drop functions or
-        // allocations happening during the critical path
-        if (claimed_id as usize) < self.capacity as usize {
-            forget(old_value);
-        } else {
-            drop(old_value);
-        }
-        Ok(())
+        self.internal_send(value, claimed_id)
     }
     pub async fn async_send(&mut self, value: T) -> Result<(), SenderError> {
         let claimed_id = self.async_claim(1).await?;
+
+        self.internal_send(value, claimed_id)
+    }
+
+    #[inline(always)]
+    fn internal_send(&mut self, value: T, claimed_id: isize) -> Result<(), SenderError> {
         let index = claimed_id as usize % self.capacity as usize;
 
         let old_value;
@@ -219,9 +191,13 @@ where
         Ok(())
     }
 
-    pub fn send_batch(&mut self, mut data: Vec<T>) -> Result<(), SenderError> {
+    #[inline(always)]
+    fn internal_send_batch(
+        &mut self,
+        mut data: Vec<T>,
+        start_id: isize,
+    ) -> Result<(), SenderError> {
         let total_num = data.len() as isize;
-        let start_id = self.claim(data.len() as isize)?;
         let start_index = (start_id % self.capacity) as usize;
         let end_index = start_index + data.len();
 
@@ -272,57 +248,15 @@ where
         Ok(())
     }
 
-    pub async fn async_send_batch(&mut self, mut data: Vec<T>) -> Result<(), SenderError> {
-        let total_num = data.len() as isize;
+    pub fn send_batch(&mut self, data: Vec<T>) -> Result<(), SenderError> {
+        let start_id = self.claim(data.len() as isize)?;
+
+        self.internal_send_batch(data, start_id)
+    }
+
+    pub async fn async_send_batch(&mut self, data: Vec<T>) -> Result<(), SenderError> {
         let start_id = self.async_claim(data.len() as isize).await?;
-        let start_index = (start_id % self.capacity) as usize;
-        let end_index = start_index + data.len();
-
-        if end_index < self.capacity as usize {
-            unsafe {
-                let target = &mut (*self.disruptor.ring)[start_index..end_index];
-                std::ptr::swap_nonoverlapping(data.as_mut_ptr(), target.as_mut_ptr(), data.len());
-            }
-            if start_id < self.capacity {
-                forget(data.into_boxed_slice());
-            }
-        } else {
-            let mut index = start_index;
-            for value in data {
-                if index < self.capacity as usize {
-                    //forget the old value
-                    unsafe {
-                        let old = std::mem::replace(
-                            &mut (*self.disruptor.ring)[index % self.capacity as usize],
-                            value,
-                        );
-                        forget(old);
-                    }
-                } else {
-                    //drop the old value
-                    unsafe {
-                        (*self.disruptor.ring)[index % self.capacity as usize] = value;
-                    }
-                }
-                index += 1;
-            }
-        }
-
-        while self
-            .disruptor
-            .committed
-            .compare_exchange_weak(
-                start_id - 1,
-                start_id + total_num - 1,
-                Ordering::Release,
-                Ordering::Relaxed,
-            )
-            .is_err()
-        {}
-        // Notify other threads that a value has been written
-        self.disruptor.writer_move.notify(usize::MAX);
-
-        Ok(())
+        self.internal_send_batch(data, start_id)
     }
 }
 
@@ -334,7 +268,7 @@ mod sender_tests {
         let (mut sender, mut receiver) = channel(50);
         let expected: Vec<i32> = (0..12).collect();
         sender.send_batch(expected).expect("send failed");
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(12);
         receiver
             .batch_recv(&mut result)
             .expect("receiver was okay!");
@@ -352,7 +286,7 @@ mod sender_tests {
         let _ = receiver.recv().expect("couldn't receive");
         let expected: Vec<i32> = (2..12).collect();
         sender.send_batch(expected).expect("send failed");
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(12);
         receiver
             .batch_recv(&mut result)
             .expect("receiver was okay!");

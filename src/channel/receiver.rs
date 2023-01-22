@@ -9,6 +9,8 @@ use thiserror::Error;
 pub enum ReaderError {
     #[error("there is no unread data on the channel")]
     NoNewData,
+    #[error("the destination for reads doesn't have enough remaining capacity")]
+    DestinationFull,
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +128,21 @@ where
     pub fn add_stream(&self) -> Self {
         self.disruptor.clone().into()
     }
+
+    /// Try to read the next value from the channel. This function will not block and will return
+    /// a [`ReaderError::NoNewData`] if there is no data available
+    ///
+    /// returns: Result<T, ReaderError>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///# use nexusq::channel;
+    ///let (mut sender, mut receiver) = channel(10);
+    ///sender.send(4).expect("couldn't send");
+    ///let result = receiver.try_read_next().expect("couldn't receive");
+    ///assert_eq!(result, 4);
+    /// ```
     pub fn try_read_next(&mut self) -> Result<T, ReaderError> {
         let committed = self.disruptor.committed.load(Ordering::Acquire);
         if self.internal_cursor > committed {
@@ -142,12 +159,27 @@ where
         Ok(value)
     }
 
+    /// Read the next value from the channel. This function will block and wait for data to
+    /// become available.
+    ///
+    /// returns: Result<T, ReaderError>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///# use nexusq::channel;
+    ///let (mut sender, mut receiver) = channel(10);
+    ///sender.send(4).expect("couldn't send");
+    ///let result = receiver.recv().expect("couldn't receive");
+    ///assert_eq!(result, 4);
+    /// ```
     pub fn recv(&mut self) -> Result<T, ReaderError> {
         let immediate = self.try_read_next();
         match &immediate {
             Ok(_) => return immediate,
             Err(err) => match err {
                 ReaderError::NoNewData => {} // this is an expected error here
+                ReaderError::DestinationFull => return immediate,
             },
         };
 
@@ -158,6 +190,7 @@ where
             Ok(_) => return immediate,
             Err(err) => match err {
                 ReaderError::NoNewData => {} // this is an expected error here
+                ReaderError::DestinationFull => return immediate,
             },
         };
         listener.wait();
@@ -169,17 +202,20 @@ where
                 Ok(_) => return immediate,
                 Err(err) => match err {
                     ReaderError::NoNewData => continue, // this is an expected error here
+                    ReaderError::DestinationFull => return immediate,
                 },
             };
         }
     }
 
+    /// Async version of [`Receiver::recv`]
     pub async fn async_recv(&mut self) -> Result<T, ReaderError> {
         let immediate = self.try_read_next();
         match &immediate {
             Ok(_) => return immediate,
             Err(err) => match err {
                 ReaderError::NoNewData => {} // this is an expected error here
+                ReaderError::DestinationFull => return immediate,
             },
         };
 
@@ -190,6 +226,7 @@ where
             Ok(_) => return immediate,
             Err(err) => match err {
                 ReaderError::NoNewData => {} // this is an expected error here
+                ReaderError::DestinationFull => return immediate,
             },
         };
         listener.await;
@@ -201,27 +238,60 @@ where
                 Ok(_) => return immediate,
                 Err(err) => match err {
                     ReaderError::NoNewData => continue, // this is an expected error here
+                    ReaderError::DestinationFull => return immediate,
                 },
             };
         }
     }
 
-    pub fn batch_recv(&mut self, res: &mut Vec<T>) -> Result<(), ReaderError> {
+    /// Read as many values as are available. Results are stored in the argument `result`
+    ///
+    /// This operation is more efficient than reading values individually as it only has to
+    /// check the cursors a single time.
+    ///
+    /// If T implements Copy this function will be extremely fast as the data is copied directly into
+    /// the result array using memcpy.
+    ///
+    /// # Arguments
+    ///
+    /// * `result`: A pre allocated vector in which to store the results. The vector will not reallocate
+    ///
+    /// returns: Result<(), ReaderError>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///# use nexusq::channel;
+    ///let (mut sender, mut receiver) = channel(10);
+    ///let expected: Vec<i32> = (0..8).map(|v|{sender.send(v); v}).collect();
+    ///let mut result = Vec::with_capacity(8);
+    ///receiver.batch_recv(&mut result).expect("batch recv failed");
+    ///assert_eq!(result, expected);
+    /// ```
+    pub fn batch_recv(&mut self, result: &mut Vec<T>) -> Result<(), ReaderError> {
+        let result_remaining_capacity = result.capacity() - result.len();
+        if result_remaining_capacity == 0 {
+            return Err(ReaderError::DestinationFull);
+        }
         let committed = self.disruptor.committed.load(Ordering::Acquire);
         if self.internal_cursor > committed {
             return Err(ReaderError::NoNewData);
         }
-        let num_to_read = (committed + 1 - self.internal_cursor) as usize;
-        res.reserve_exact(num_to_read);
+        let num_available = (committed + 1 - self.internal_cursor) as usize;
+        let num_to_read = num_available.clamp(0, result.capacity() - result.len());
+        if num_to_read == 0 {
+            return Err(ReaderError::NoNewData);
+        }
+        result.reserve_exact(num_to_read);
         let from_index = (self.internal_cursor % self.capacity) as usize;
         let to_index = from_index + num_to_read;
         if to_index <= self.capacity as usize {
             // this copy won't wrap
             unsafe {
                 let target =
-                    slice::from_raw_parts_mut(res.as_mut_ptr().add(res.len()), num_to_read);
+                    slice::from_raw_parts_mut(result.as_mut_ptr().add(result.len()), num_to_read);
                 let src = &(*self.disruptor.ring)[from_index..to_index];
-                res.set_len(res.len() + target.len());
+                result.set_len(result.len() + target.len());
                 // Clone will specialise to copy when it can. This will be very fast for copy types!
                 target.clone_from_slice(src);
             }
@@ -230,22 +300,22 @@ where
             // end section
             unsafe {
                 let target = slice::from_raw_parts_mut(
-                    res.as_mut_ptr().add(res.len()),
+                    result.as_mut_ptr().add(result.len()),
                     self.capacity as usize - from_index,
                 );
                 let src = &(*self.disruptor.ring)[from_index..];
-                res.set_len(res.len() + target.len());
+                result.set_len(result.len() + target.len());
                 // Clone will specialise to copy when it can. This will be very fast for copy types!
                 target.clone_from_slice(src);
             }
             // start section
             unsafe {
                 let target = slice::from_raw_parts_mut(
-                    res.as_mut_ptr().add(res.len()),
+                    result.as_mut_ptr().add(result.len()),
                     to_index - self.capacity as usize,
                 );
                 let src = &(*self.disruptor.ring)[..(to_index - (self.capacity as usize))];
-                res.set_len(res.len() + target.len());
+                result.set_len(result.len() + target.len());
                 // Clone will specialise to copy when it can. This will be very fast for copy types!
                 target.clone_from_slice(src);
             }
@@ -264,7 +334,7 @@ mod receiver_tests {
         for i in &expected {
             sender.send(*i).expect("couldn't send");
         }
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(8);
         receiver
             .batch_recv(&mut result)
             .expect("receiver was okay!");
@@ -279,11 +349,26 @@ mod receiver_tests {
         for i in &expected {
             sender.send(*i).expect("couldn't send");
         }
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(10);
         receiver
             .batch_recv(&mut result)
             .expect("receiver was okay!");
 
+        assert_eq!(result, expected)
+    }
+
+    #[test]
+    fn batch_read_capacity_limited() {
+        let (mut sender, mut receiver) = channel(10);
+        let expected: Vec<i32> = (0..10).collect();
+        for i in &expected {
+            sender.send(*i).expect("couldn't send");
+        }
+        let mut result = Vec::with_capacity(3);
+        receiver
+            .batch_recv(&mut result)
+            .expect("receiver was okay!");
+        let expected: Vec<i32> = (0..3).collect();
         assert_eq!(result, expected)
     }
 
@@ -298,7 +383,7 @@ mod receiver_tests {
         sender.send(10).expect("couldn't send");
         sender.send(11).expect("couldn't send");
         let expected: Vec<i32> = (2..12).collect();
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(10);
         receiver
             .batch_recv(&mut result)
             .expect("receiver was okay!");
