@@ -11,25 +11,65 @@ pub enum ReaderError {
     NoNewData,
 }
 
-#[derive(Debug)]
-pub struct Receiver<T> {
-    disruptor: Arc<Core<T, BroadcastTracker>>,
-    internal_cursor: isize,
-    shared_cursor: Arc<AtomicUsize>,
-    shared_cursor_token: usize,
-    capacity: isize,
+#[derive(Debug, Clone)]
+pub struct BroadcastReceiver<T> {
+    inner: Receiver<T, BroadcastTracker>,
 }
 
-impl<T> Drop for Receiver<T> {
-    fn drop(&mut self) {
-        self.disruptor
-            .readers
-            .remove_receiver(self.shared_cursor_token, &self.shared_cursor)
+impl<T> From<Receiver<T, BroadcastTracker>> for BroadcastReceiver<T> {
+    fn from(inner: Receiver<T, BroadcastTracker>) -> Self {
+        Self { inner }
     }
 }
 
-impl<T> From<Arc<Core<T, BroadcastTracker>>> for Receiver<T> {
-    fn from(disruptor: Arc<Core<T, BroadcastTracker>>) -> Self {
+impl<T> BroadcastReceiver<T>
+where
+    T: Clone,
+{
+    pub fn add_stream(&self) -> Self {
+        Self {
+            inner: self.inner.add_stream(),
+        }
+    }
+    pub fn try_read_next(&mut self) -> Result<T, ReaderError> {
+        self.inner.try_read_next()
+    }
+    pub fn recv(&mut self) -> Result<T, ReaderError> {
+        self.inner.recv()
+    }
+    pub async fn async_recv(&mut self) -> Result<T, ReaderError> {
+        self.inner.async_recv().await
+    }
+    pub fn batch_recv(&mut self, res: &mut Vec<T>) -> Result<(), ReaderError> {
+        self.inner.batch_recv(res)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Receiver<T, TR: Tracker> {
+    disruptor: Arc<Core<T, TR>>,
+    internal_cursor: isize,
+    shared_cursor: Arc<AtomicUsize>,
+    shared_cursor_token: TR::Token,
+    capacity: isize,
+}
+
+impl<T, TR> Drop for Receiver<T, TR>
+where
+    TR: Tracker,
+{
+    fn drop(&mut self) {
+        self.disruptor
+            .readers
+            .remove_receiver(self.shared_cursor_token.clone(), &self.shared_cursor)
+    }
+}
+
+impl<T, TR> From<Arc<Core<T, TR>>> for Receiver<T, TR>
+where
+    TR: Tracker,
+{
+    fn from(disruptor: Arc<Core<T, TR>>) -> Self {
         let (shared_cursor_id, shared_cursor) = disruptor.readers.new_receiver(
             disruptor
                 .committed
@@ -47,7 +87,10 @@ impl<T> From<Arc<Core<T, BroadcastTracker>>> for Receiver<T> {
     }
 }
 
-impl<T> Clone for Receiver<T> {
+impl<T, TR> Clone for Receiver<T, TR>
+where
+    TR: Tracker,
+{
     /// Creates a new receiver at the same point in the stream
     fn clone(&self) -> Self {
         let (shared_cursor_id, shared_cursor) =
@@ -62,7 +105,10 @@ impl<T> Clone for Receiver<T> {
     }
 }
 
-impl<T> Receiver<T> {
+impl<T, TR> Receiver<T, TR>
+where
+    TR: Tracker,
+{
     #[inline(always)]
     fn increment_cursor(&mut self) {
         self.internal_cursor += 1;
@@ -71,9 +117,10 @@ impl<T> Receiver<T> {
     }
 }
 
-impl<T> Receiver<T>
+impl<T, TR> Receiver<T, TR>
 where
     T: Clone,
+    TR: Tracker,
 {
     /// Creates a new receiver at the most recent entry in the stream
     pub fn add_stream(&self) -> Self {

@@ -60,11 +60,12 @@ where
     }
 }
 
-pub fn channel<T>(size: usize) -> (sender::BroadcastSender<T>, receiver::Receiver<T>) {
+pub fn channel<T>(size: usize) -> (sender::BroadcastSender<T>, receiver::BroadcastReceiver<T>) {
     let core = Arc::new(Core::new(size));
     let inner_sender = sender::Sender::from(core.clone());
     let sender = sender::BroadcastSender::from(inner_sender);
-    let receiver = receiver::Receiver::from(core);
+    let inner_receiver = receiver::Receiver::from(core);
+    let receiver = receiver::BroadcastReceiver::from(inner_receiver);
     (sender, receiver)
 }
 
@@ -74,7 +75,7 @@ mod tests {
     use std::thread::{spawn, JoinHandle};
 
     #[inline(always)]
-    fn read_n(mut receiver: receiver::Receiver<usize>, num_to_read: usize) -> Vec<usize> {
+    fn read_n(mut receiver: receiver::BroadcastReceiver<usize>, num_to_read: usize) -> Vec<usize> {
         let mut results = Vec::with_capacity(num_to_read);
         for _ in 0..num_to_read {
             let v = receiver.recv();

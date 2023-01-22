@@ -10,7 +10,7 @@ trait TestReceiver: Send + 'static {
     fn another(&self) -> Self;
 }
 
-impl<T> TestReceiver for nexusq::Receiver<T>
+impl<T> TestReceiver for nexusq::BroadcastReceiver<T>
 where
     T: 'static + Clone + Send,
 {
