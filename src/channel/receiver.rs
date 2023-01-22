@@ -28,20 +28,68 @@ impl<T> BroadcastReceiver<T>
 where
     T: Clone,
 {
+    /// Creates a new receiver at the most recent entry in the stream
     pub fn add_stream(&self) -> Self {
         Self {
             inner: self.inner.add_stream(),
         }
     }
+    /// Try to read the next value from the channel. This function will not block and will return
+    /// a [`ReaderError::NoNewData`] if there is no data available
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///# use nexusq::channel;
+    ///let (mut sender, mut receiver) = channel(10);
+    ///sender.send(4).expect("couldn't send");
+    ///let result = receiver.try_read_next().expect("couldn't receive");
+    ///assert_eq!(result, 4);
+    /// ```
     pub fn try_read_next(&mut self) -> Result<T, ReaderError> {
         self.inner.try_read_next()
     }
+    /// Read the next value from the channel. This function will block and wait for data to
+    /// become available.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///# use nexusq::channel;
+    ///let (mut sender, mut receiver) = channel(10);
+    ///sender.send(4).expect("couldn't send");
+    ///let result = receiver.recv().expect("couldn't receive");
+    ///assert_eq!(result, 4);
+    /// ```
     pub fn recv(&mut self) -> Result<T, ReaderError> {
         self.inner.recv()
     }
+    /// Async version of [`BroadcastReceiver::recv`]
     pub async fn async_recv(&mut self) -> Result<T, ReaderError> {
         self.inner.async_recv().await
     }
+    /// Read as many values as are available. Results are stored in the argument `result`
+    ///
+    /// This operation is more efficient than reading values individually as it only has to
+    /// check the cursors a single time.
+    ///
+    /// If T implements Copy this function will be extremely fast as the data is copied directly into
+    /// the result array using memcpy.
+    ///
+    /// # Arguments
+    ///
+    /// * `result`: A pre allocated vector in which to store the results. The vector will not reallocate
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///# use nexusq::channel;
+    ///let (mut sender, mut receiver) = channel(10);
+    ///let expected: Vec<i32> = (0..8).map(|v|{sender.send(v); v}).collect();
+    ///let mut result = Vec::with_capacity(8);
+    ///receiver.batch_recv(&mut result).expect("batch recv failed");
+    ///assert_eq!(result, expected);
+    /// ```
     pub fn batch_recv(&mut self, res: &mut Vec<T>) -> Result<(), ReaderError> {
         self.inner.batch_recv(res)
     }
@@ -131,18 +179,6 @@ where
 
     /// Try to read the next value from the channel. This function will not block and will return
     /// a [`ReaderError::NoNewData`] if there is no data available
-    ///
-    /// returns: Result<T, ReaderError>
-    ///
-    /// # Examples
-    ///
-    /// ```
-    ///# use nexusq::channel;
-    ///let (mut sender, mut receiver) = channel(10);
-    ///sender.send(4).expect("couldn't send");
-    ///let result = receiver.try_read_next().expect("couldn't receive");
-    ///assert_eq!(result, 4);
-    /// ```
     pub fn try_read_next(&mut self) -> Result<T, ReaderError> {
         let committed = self.disruptor.committed.load(Ordering::Acquire);
         if self.internal_cursor > committed {
@@ -161,18 +197,6 @@ where
 
     /// Read the next value from the channel. This function will block and wait for data to
     /// become available.
-    ///
-    /// returns: Result<T, ReaderError>
-    ///
-    /// # Examples
-    ///
-    /// ```
-    ///# use nexusq::channel;
-    ///let (mut sender, mut receiver) = channel(10);
-    ///sender.send(4).expect("couldn't send");
-    ///let result = receiver.recv().expect("couldn't receive");
-    ///assert_eq!(result, 4);
-    /// ```
     pub fn recv(&mut self) -> Result<T, ReaderError> {
         let immediate = self.try_read_next();
         match &immediate {
@@ -255,19 +279,6 @@ where
     /// # Arguments
     ///
     /// * `result`: A pre allocated vector in which to store the results. The vector will not reallocate
-    ///
-    /// returns: Result<(), ReaderError>
-    ///
-    /// # Examples
-    ///
-    /// ```
-    ///# use nexusq::channel;
-    ///let (mut sender, mut receiver) = channel(10);
-    ///let expected: Vec<i32> = (0..8).map(|v|{sender.send(v); v}).collect();
-    ///let mut result = Vec::with_capacity(8);
-    ///receiver.batch_recv(&mut result).expect("batch recv failed");
-    ///assert_eq!(result, expected);
-    /// ```
     pub fn batch_recv(&mut self, result: &mut Vec<T>) -> Result<(), ReaderError> {
         let result_remaining_capacity = result.capacity() - result.len();
         if result_remaining_capacity == 0 {
