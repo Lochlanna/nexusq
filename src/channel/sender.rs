@@ -1,6 +1,7 @@
 use super::*;
 use crate::channel::tracker::broadcast_tracker::BroadcastTracker;
 use crate::channel::tracker::Tracker;
+use async_trait::async_trait;
 use std::mem::forget;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -13,34 +14,22 @@ pub enum SenderError {
     InputTooLarge,
 }
 
-#[derive(Debug, Clone)]
-pub struct BroadcastSender<T> {
-    inner: Sender<T, BroadcastTracker>,
-}
-
-impl<T> BroadcastSender<T>
-where
-    T: Send,
-{
+#[async_trait]
+pub trait Sender {
+    type Item: Send;
     /// Send a single value to the channel. This function will block if there is no space
     /// available in the channel.
     ///
     /// # Examples
     ///
     /// ```
-    ///# use nexusq::channel;
+    ///# use nexusq::{channel, Sender, Receiver};
     ///let (mut sender, mut receiver) = channel(10);
     ///sender.send(4).expect("couldn't send");
     ///let result = receiver.try_read_next().expect("couldn't receive");
     ///assert_eq!(result, 4);
     /// ```
-    pub fn send(&mut self, value: T) -> Result<(), SenderError> {
-        self.inner.send(value)
-    }
-    /// Async version of [`BroadcastSender::send`]
-    pub async fn async_send(&mut self, value: T) -> Result<(), SenderError> {
-        self.inner.async_send(value).await
-    }
+    fn send(&mut self, value: Self::Item) -> Result<(), SenderError>;
     /// Send multiple values to the channel in one call. This function should perform better
     /// than sending them individually.
     ///
@@ -55,7 +44,7 @@ where
     /// # Examples
     ///
     /// ```
-    ///# use nexusq::channel;
+    ///# use nexusq::{channel, Sender, Receiver};
     ///let (mut sender, mut receiver) = channel(50);
     ///let expected: Vec<i32> = (0..12).collect();
     ///sender.send_batch(expected.clone()).expect("batch send failed");
@@ -65,29 +54,55 @@ where
     ///    .expect("batch receive failed");
     ///assert_eq!(result, expected)
     /// ```
-    pub fn send_batch(&mut self, values: Vec<T>) -> Result<(), SenderError> {
-        self.inner.send_batch(values)
-    }
-    /// Async version of [`BroadcastSender::send_batch`]
-    pub async fn async_send_batch(&mut self, values: Vec<T>) -> Result<(), SenderError> {
-        self.inner.async_send_batch(values).await
-    }
+    fn send_batch(&mut self, values: Vec<Self::Item>) -> Result<(), SenderError>;
+    /// Async version of [`Sender::send`]
+    async fn async_send(&mut self, value: Self::Item) -> Result<(), SenderError>;
+    /// Async version of [`Sender::send_batch`]
+    async fn async_send_batch(&mut self, values: Vec<Self::Item>) -> Result<(), SenderError>;
 }
 
-impl<T> From<Sender<T, BroadcastTracker>> for BroadcastSender<T> {
-    fn from(sender: Sender<T, BroadcastTracker>) -> Self {
+#[derive(Debug, Clone)]
+pub struct BroadcastSender<T> {
+    inner: SenderCore<T, BroadcastTracker>,
+}
+
+#[async_trait]
+impl<T> Sender for BroadcastSender<T>
+where
+    T: Send,
+{
+    fn send(&mut self, value: Self::Item) -> Result<(), SenderError> {
+        self.inner.send(value)
+    }
+
+    async fn async_send(&mut self, value: Self::Item) -> Result<(), SenderError> {
+        self.inner.async_send(value).await
+    }
+    fn send_batch(&mut self, values: Vec<Self::Item>) -> Result<(), SenderError> {
+        self.inner.send_batch(values)
+    }
+
+    async fn async_send_batch(&mut self, values: Vec<Self::Item>) -> Result<(), SenderError> {
+        self.inner.async_send_batch(values).await
+    }
+
+    type Item = T;
+}
+
+impl<T> From<SenderCore<T, BroadcastTracker>> for BroadcastSender<T> {
+    fn from(sender: SenderCore<T, BroadcastTracker>) -> Self {
         Self { inner: sender }
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct Sender<T, TR> {
+pub(crate) struct SenderCore<T, TR> {
     disruptor: Arc<Core<T, TR>>,
     capacity: isize,
     cached_slowest_reader: isize,
 }
 
-impl<T, TR> Clone for Sender<T, TR> {
+impl<T, TR> Clone for SenderCore<T, TR> {
     fn clone(&self) -> Self {
         Self {
             disruptor: self.disruptor.clone(),
@@ -97,7 +112,7 @@ impl<T, TR> Clone for Sender<T, TR> {
     }
 }
 
-impl<T, TR> From<Arc<Core<T, TR>>> for Sender<T, TR> {
+impl<T, TR> From<Arc<Core<T, TR>>> for SenderCore<T, TR> {
     fn from(disruptor: Arc<Core<T, TR>>) -> Self {
         let capacity = disruptor.capacity;
         Self {
@@ -108,7 +123,7 @@ impl<T, TR> From<Arc<Core<T, TR>>> for Sender<T, TR> {
     }
 }
 
-impl<T, TR> Sender<T, TR>
+impl<T, TR> SenderCore<T, TR>
 where
     T: Send,
     TR: Tracker,
@@ -137,15 +152,13 @@ where
             // we call wait it should return immediately
             slowest_reader = self.disruptor.readers.slowest(tail);
             if slowest_reader > tail {
-                return Ok(claimed);
+                break;
             }
             listener.wait();
             slowest_reader = self.disruptor.readers.slowest(tail);
         }
+        self.cached_slowest_reader = slowest_reader;
         // TODO check if there is another writer writing to a different ID but the same cell.
-        if slowest_reader > tail {
-            self.cached_slowest_reader = slowest_reader;
-        }
 
         Ok(claimed)
     }
@@ -173,15 +186,13 @@ where
             // we call wait it should return immediately
             slowest_reader = self.disruptor.readers.slowest(tail);
             if slowest_reader > tail {
-                return Ok(claimed);
+                break;
             }
             listener.await;
             slowest_reader = self.disruptor.readers.slowest(tail);
         }
+        self.cached_slowest_reader = slowest_reader;
         // TODO check if there is another writer writing to a different ID but the same cell.
-        if slowest_reader > tail {
-            self.cached_slowest_reader = slowest_reader;
-        }
 
         Ok(claimed)
     }
@@ -295,14 +306,18 @@ where
     }
 
     pub async fn async_send_batch(&mut self, data: Vec<T>) -> Result<(), SenderError> {
-        let start_id = self.async_claim(data.len() as isize).await?;
+        let num_to_claim = data.len() as isize;
+        let start_id = self.async_claim(num_to_claim).await?;
         self.internal_send_batch(data, start_id)
     }
 }
 
 #[cfg(test)]
 mod sender_tests {
+    use crate::channel::sender::Sender;
     use crate::channel::*;
+    use crate::Receiver;
+
     #[test]
     fn batch_write() {
         let (mut sender, mut receiver) = channel(50);

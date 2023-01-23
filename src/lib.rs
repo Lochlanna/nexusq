@@ -6,6 +6,6 @@ mod channel;
 
 pub use channel::{
     channel,
-    receiver::{BroadcastReceiver, ReaderError},
-    sender::{BroadcastSender, SenderError},
+    receiver::{BroadcastReceiver, ReaderError, Receiver},
+    sender::{BroadcastSender, Sender, SenderError},
 };

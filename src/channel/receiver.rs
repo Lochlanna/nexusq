@@ -1,5 +1,6 @@
 use super::*;
 use crate::channel::tracker::Tracker;
+use async_trait::async_trait;
 use core::slice;
 use std::mem::ManuallyDrop;
 use std::sync::atomic::Ordering;
@@ -16,13 +17,22 @@ pub enum ReaderError {
     DestinationFull,
 }
 
-#[derive(Debug, Clone)]
-pub struct BroadcastReceiver<T> {
-    inner: Receiver<T, BroadcastTracker>,
+#[async_trait]
+pub trait Receiver {
+    type Item;
+    fn try_read_next(&mut self) -> Result<Self::Item, ReaderError>;
+    fn recv(&mut self) -> Result<Self::Item, ReaderError>;
+    async fn async_recv(&mut self) -> Result<Self::Item, ReaderError>;
+    fn batch_recv(&mut self, res: &mut Vec<Self::Item>) -> Result<(), ReaderError>;
 }
 
-impl<T> From<Receiver<T, BroadcastTracker>> for BroadcastReceiver<T> {
-    fn from(inner: Receiver<T, BroadcastTracker>) -> Self {
+#[derive(Debug, Clone)]
+pub struct BroadcastReceiver<T> {
+    inner: ReceiverCore<T, BroadcastTracker>,
+}
+
+impl<T> From<ReceiverCore<T, BroadcastTracker>> for BroadcastReceiver<T> {
+    fn from(inner: ReceiverCore<T, BroadcastTracker>) -> Self {
         Self { inner }
     }
 }
@@ -37,19 +47,27 @@ where
             inner: self.inner.add_stream(),
         }
     }
+}
+#[async_trait]
+impl<T> Receiver for BroadcastReceiver<T>
+where
+    T: Clone,
+{
+    type Item = T;
+
     /// Try to read the next value from the channel. This function will not block and will return
     /// a [`ReaderError::NoNewData`] if there is no data available
     ///
     /// # Examples
     ///
     /// ```
-    ///# use nexusq::channel;
+    ///# use nexusq::{channel, Sender, Receiver};
     ///let (mut sender, mut receiver) = channel(10);
     ///sender.send(4).expect("couldn't send");
     ///let result = receiver.try_read_next().expect("couldn't receive");
     ///assert_eq!(result, 4);
     /// ```
-    pub fn try_read_next(&mut self) -> Result<T, ReaderError> {
+    fn try_read_next(&mut self) -> Result<Self::Item, ReaderError> {
         self.inner.try_read_next()
     }
     /// Read the next value from the channel. This function will block and wait for data to
@@ -58,17 +76,17 @@ where
     /// # Examples
     ///
     /// ```
-    ///# use nexusq::channel;
+    ///# use nexusq::{channel, Sender, Receiver};
     ///let (mut sender, mut receiver) = channel(10);
     ///sender.send(4).expect("couldn't send");
     ///let result = receiver.recv().expect("couldn't receive");
     ///assert_eq!(result, 4);
     /// ```
-    pub fn recv(&mut self) -> Result<T, ReaderError> {
+    fn recv(&mut self) -> Result<Self::Item, ReaderError> {
         self.inner.recv()
     }
     /// Async version of [`BroadcastReceiver::recv`]
-    pub async fn async_recv(&mut self) -> Result<T, ReaderError> {
+    async fn async_recv(&mut self) -> Result<Self::Item, ReaderError> {
         self.inner.async_recv().await
     }
     /// Read as many values as are available. Results are stored in the argument `result`
@@ -86,27 +104,27 @@ where
     /// # Examples
     ///
     /// ```
-    ///# use nexusq::channel;
+    ///# use nexusq::{channel, Sender, Receiver};
     ///let (mut sender, mut receiver) = channel(10);
     ///let expected: Vec<i32> = (0..8).map(|v|{sender.send(v); v}).collect();
     ///let mut result = Vec::with_capacity(8);
     ///receiver.batch_recv(&mut result).expect("batch recv failed");
     ///assert_eq!(result, expected);
     /// ```
-    pub fn batch_recv(&mut self, res: &mut Vec<T>) -> Result<(), ReaderError> {
+    fn batch_recv(&mut self, res: &mut Vec<Self::Item>) -> Result<(), ReaderError> {
         self.inner.batch_recv(res)
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct Receiver<T, TR: Tracker> {
+pub(crate) struct ReceiverCore<T, TR: Tracker> {
     disruptor: Arc<Core<T, TR>>,
     internal_cursor: isize,
     shared_cursor: ManuallyDrop<Arc<AtomicUsize>>,
     capacity: isize,
 }
 
-impl<T, TR> Drop for Receiver<T, TR>
+impl<T, TR> Drop for ReceiverCore<T, TR>
 where
     TR: Tracker,
 {
@@ -118,7 +136,7 @@ where
     }
 }
 
-impl<T, TR> From<Arc<Core<T, TR>>> for Receiver<T, TR>
+impl<T, TR> From<Arc<Core<T, TR>>> for ReceiverCore<T, TR>
 where
     TR: Tracker,
 {
@@ -141,7 +159,7 @@ where
     }
 }
 
-impl<T, TR> Clone for Receiver<T, TR>
+impl<T, TR> Clone for ReceiverCore<T, TR>
 where
     TR: Tracker,
 {
@@ -158,7 +176,7 @@ where
     }
 }
 
-impl<T, TR> Receiver<T, TR>
+impl<T, TR> ReceiverCore<T, TR>
 where
     TR: Tracker,
 {
@@ -170,7 +188,7 @@ where
     }
 }
 
-impl<T, TR> Receiver<T, TR>
+impl<T, TR> ReceiverCore<T, TR>
 where
     T: Clone,
     TR: Tracker,
@@ -235,27 +253,31 @@ where
         }
     }
 
-    /// Async version of [`Receiver::recv`]
+    /// Async version of [`ReceiverCore::recv`]
     pub async fn async_recv(&mut self) -> Result<T, ReaderError> {
-        let immediate = self.try_read_next();
-        match &immediate {
-            Ok(_) => return immediate,
-            Err(err) => match err {
-                ReaderError::NoNewData => {} // this is an expected error here
-                ReaderError::DestinationFull => return immediate,
-            },
-        };
+        {
+            let immediate = self.try_read_next();
+            match &immediate {
+                Ok(_) => return immediate,
+                Err(err) => match err {
+                    ReaderError::NoNewData => {} // this is an expected error here
+                    ReaderError::DestinationFull => return immediate,
+                },
+            };
+        }
 
         let listener = self.disruptor.writer_move.listen();
         // try again as the listener can take some time to be registered and cause us to miss things
-        let immediate = self.try_read_next();
-        match &immediate {
-            Ok(_) => return immediate,
-            Err(err) => match err {
-                ReaderError::NoNewData => {} // this is an expected error here
-                ReaderError::DestinationFull => return immediate,
-            },
-        };
+        {
+            let immediate = self.try_read_next();
+            match &immediate {
+                Ok(_) => return immediate,
+                Err(err) => match err {
+                    ReaderError::NoNewData => {} // this is an expected error here
+                    ReaderError::DestinationFull => return immediate,
+                },
+            };
+        }
         listener.await;
 
         loop {
@@ -340,7 +362,10 @@ where
 
 #[cfg(test)]
 mod receiver_tests {
+    use crate::channel::sender::Sender;
     use crate::channel::*;
+    use crate::Receiver;
+
     #[test]
     fn batch_read() {
         let (mut sender, mut receiver) = channel(10);

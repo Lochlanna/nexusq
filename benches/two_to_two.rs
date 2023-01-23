@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use std::sync::mpsc::TrySendError;
 
-use nexusq::channel;
+use nexusq::{channel, Receiver, Sender};
 use std::thread::{spawn, JoinHandle};
 
 trait TestReceiver: Send + 'static {
@@ -19,7 +19,7 @@ where
     #[inline(always)]
     fn test_recv(&mut self) -> Self::Item {
         loop {
-            match self.try_read_next() {
+            match self.recv() {
                 Ok(v) => return v,
                 Err(_) => continue,
             }

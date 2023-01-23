@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 
-use nexusq::channel;
+use nexusq::{channel, Receiver, Sender};
 use std::thread::spawn;
 
 fn nexus(num: usize) {

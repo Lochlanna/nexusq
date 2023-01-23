@@ -62,9 +62,9 @@ where
 
 pub fn channel<T>(size: usize) -> (sender::BroadcastSender<T>, receiver::BroadcastReceiver<T>) {
     let core = Arc::new(Core::new(size));
-    let inner_sender = sender::Sender::from(core.clone());
+    let inner_sender = sender::SenderCore::from(core.clone());
     let sender = sender::BroadcastSender::from(inner_sender);
-    let inner_receiver = receiver::Receiver::from(core);
+    let inner_receiver = receiver::ReceiverCore::from(core);
     let receiver = receiver::BroadcastReceiver::from(inner_receiver);
     (sender, receiver)
 }
@@ -72,6 +72,8 @@ pub fn channel<T>(size: usize) -> (sender::BroadcastSender<T>, receiver::Broadca
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channel::sender::Sender;
+    use crate::Receiver;
     use std::thread::{spawn, JoinHandle};
 
     #[inline(always)]
