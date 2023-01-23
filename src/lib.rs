@@ -1,6 +1,5 @@
 #![allow(dead_code)]
-
-extern crate core;
+#![doc = include_str!("../README.md")]
 
 mod channel;
 

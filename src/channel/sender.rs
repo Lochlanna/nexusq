@@ -1,6 +1,7 @@
 use super::*;
 use crate::channel::tracker::broadcast_tracker::BroadcastTracker;
 use crate::channel::tracker::Tracker;
+use crate::BroadcastReceiver;
 use async_trait::async_trait;
 use std::mem::forget;
 use std::sync::atomic::Ordering;
@@ -66,27 +67,45 @@ pub struct BroadcastSender<T> {
     inner: SenderCore<T, BroadcastTracker>,
 }
 
+impl<T> From<&BroadcastReceiver<T>> for BroadcastSender<T> {
+    fn from(receiver: &BroadcastReceiver<T>) -> Self {
+        let core = receiver.clone_core();
+        Self { inner: core.into() }
+    }
+}
+
+impl<T> BroadcastSender<T> {
+    pub(crate) fn clone_core(&self) -> Arc<Core<T, BroadcastTracker>> {
+        self.inner.disruptor.clone()
+    }
+    /// Creates a new receiver to the same channel. Points to the most
+    /// recently sent value in the channel
+    pub fn new_receiver(&self) -> BroadcastReceiver<T> {
+        self.into()
+    }
+}
+
 #[async_trait]
 impl<T> Sender for BroadcastSender<T>
 where
     T: Send,
 {
+    type Item = T;
+
     fn send(&mut self, value: Self::Item) -> Result<(), SenderError> {
         self.inner.send(value)
-    }
-
-    async fn async_send(&mut self, value: Self::Item) -> Result<(), SenderError> {
-        self.inner.async_send(value).await
     }
     fn send_batch(&mut self, values: Vec<Self::Item>) -> Result<(), SenderError> {
         self.inner.send_batch(values)
     }
 
+    async fn async_send(&mut self, value: Self::Item) -> Result<(), SenderError> {
+        self.inner.async_send(value).await
+    }
+
     async fn async_send_batch(&mut self, values: Vec<Self::Item>) -> Result<(), SenderError> {
         self.inner.async_send_batch(values).await
     }
-
-    type Item = T;
 }
 
 impl<T> From<SenderCore<T, BroadcastTracker>> for BroadcastSender<T> {
@@ -316,7 +335,7 @@ where
 mod sender_tests {
     use crate::channel::sender::Sender;
     use crate::channel::*;
-    use crate::Receiver;
+    use crate::{BroadcastSender, Receiver};
 
     #[test]
     fn batch_write() {
@@ -348,5 +367,14 @@ mod sender_tests {
 
         let expected: Vec<i32> = (2..12).collect();
         assert_eq!(result, expected)
+    }
+
+    #[test]
+    fn sender_from_receiver() {
+        let (_, mut receiver) = channel(10);
+        let mut sender: BroadcastSender<i32> = (&receiver).into();
+        sender.send(42).expect("couldn't send");
+        let v = receiver.recv().expect("couldn't receive");
+        assert_eq!(v, 42);
     }
 }

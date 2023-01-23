@@ -123,7 +123,7 @@ mod tracker_tests {
     use super::*;
 
     #[test]
-    fn add_remove_recover() {
+    fn add_remove_receiver() {
         let tracker = BroadcastTracker::default();
         let shared_cursor_a = tracker.new_receiver(4);
         assert_eq!(shared_cursor_a.load(Ordering::Acquire), 4);

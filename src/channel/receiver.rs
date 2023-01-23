@@ -1,5 +1,6 @@
 use super::*;
 use crate::channel::tracker::Tracker;
+use crate::BroadcastSender;
 use async_trait::async_trait;
 use core::slice;
 use std::mem::ManuallyDrop;
@@ -37,15 +38,28 @@ impl<T> From<ReceiverCore<T, BroadcastTracker>> for BroadcastReceiver<T> {
     }
 }
 
-impl<T> BroadcastReceiver<T>
-where
-    T: Clone,
-{
+impl<T> From<&BroadcastSender<T>> for BroadcastReceiver<T> {
+    fn from(sender: &BroadcastSender<T>) -> Self {
+        let core = sender.clone_core();
+        Self { inner: core.into() }
+    }
+}
+
+impl<T> BroadcastReceiver<T> {
     /// Creates a new receiver at the most recent entry in the stream
     pub fn add_stream(&self) -> Self {
         Self {
             inner: self.inner.add_stream(),
         }
+    }
+
+    pub(crate) fn clone_core(&self) -> Arc<Core<T, BroadcastTracker>> {
+        self.inner.disruptor.clone()
+    }
+
+    /// Creates a new send handle to the same channel
+    pub fn new_sender(&self) -> BroadcastSender<T> {
+        self.into()
     }
 }
 #[async_trait]
@@ -190,14 +204,19 @@ where
 
 impl<T, TR> ReceiverCore<T, TR>
 where
-    T: Clone,
     TR: Tracker,
 {
     /// Creates a new receiver at the most recent entry in the stream
     pub fn add_stream(&self) -> Self {
         self.disruptor.clone().into()
     }
+}
 
+impl<T, TR> ReceiverCore<T, TR>
+where
+    T: Clone,
+    TR: Tracker,
+{
     /// Try to read the next value from the channel. This function will not block and will return
     /// a [`ReaderError::NoNewData`] if there is no data available
     pub fn try_read_next(&mut self) -> Result<T, ReaderError> {
@@ -222,10 +241,11 @@ where
         let immediate = self.try_read_next();
         match &immediate {
             Ok(_) => return immediate,
-            Err(err) => match err {
-                ReaderError::NoNewData => {} // this is an expected error here
-                ReaderError::DestinationFull => return immediate,
-            },
+            Err(err) => {
+                if !matches!(err, ReaderError::NoNewData) {
+                    return immediate;
+                }
+            }
         };
 
         let listener = self.disruptor.writer_move.listen();
@@ -233,10 +253,11 @@ where
         let immediate = self.try_read_next();
         match &immediate {
             Ok(_) => return immediate,
-            Err(err) => match err {
-                ReaderError::NoNewData => {} // this is an expected error here
-                ReaderError::DestinationFull => return immediate,
-            },
+            Err(err) => {
+                if !matches!(err, ReaderError::NoNewData) {
+                    return immediate;
+                }
+            }
         };
         listener.wait();
 
@@ -245,10 +266,11 @@ where
             let immediate = self.try_read_next();
             match &immediate {
                 Ok(_) => return immediate,
-                Err(err) => match err {
-                    ReaderError::NoNewData => continue, // this is an expected error here
-                    ReaderError::DestinationFull => return immediate,
-                },
+                Err(err) => {
+                    if !matches!(err, ReaderError::NoNewData) {
+                        return immediate;
+                    }
+                }
             };
         }
     }
@@ -259,10 +281,11 @@ where
             let immediate = self.try_read_next();
             match &immediate {
                 Ok(_) => return immediate,
-                Err(err) => match err {
-                    ReaderError::NoNewData => {} // this is an expected error here
-                    ReaderError::DestinationFull => return immediate,
-                },
+                Err(err) => {
+                    if !matches!(err, ReaderError::NoNewData) {
+                        return immediate;
+                    }
+                }
             };
         }
 
@@ -272,10 +295,11 @@ where
             let immediate = self.try_read_next();
             match &immediate {
                 Ok(_) => return immediate,
-                Err(err) => match err {
-                    ReaderError::NoNewData => {} // this is an expected error here
-                    ReaderError::DestinationFull => return immediate,
-                },
+                Err(err) => {
+                    if !matches!(err, ReaderError::NoNewData) {
+                        return immediate;
+                    }
+                }
             };
         }
         listener.await;
@@ -285,10 +309,11 @@ where
             let immediate = self.try_read_next();
             match &immediate {
                 Ok(_) => return immediate,
-                Err(err) => match err {
-                    ReaderError::NoNewData => continue, // this is an expected error here
-                    ReaderError::DestinationFull => return immediate,
-                },
+                Err(err) => {
+                    if !matches!(err, ReaderError::NoNewData) {
+                        return immediate;
+                    }
+                }
             };
         }
     }
@@ -364,7 +389,7 @@ where
 mod receiver_tests {
     use crate::channel::sender::Sender;
     use crate::channel::*;
-    use crate::Receiver;
+    use crate::{BroadcastReceiver, Receiver};
 
     #[test]
     fn batch_read() {
@@ -428,5 +453,14 @@ mod receiver_tests {
             .expect("receiver was okay!");
 
         assert_eq!(result, expected)
+    }
+
+    #[test]
+    fn receiver_from_sender() {
+        let (mut sender, _) = channel(10);
+        sender.send(42).expect("couldn't send");
+        let mut receiver: BroadcastReceiver<i32> = (&sender).into();
+        let v = receiver.recv().expect("couldn't receive");
+        assert_eq!(v, 42);
     }
 }

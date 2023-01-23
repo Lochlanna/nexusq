@@ -60,6 +60,7 @@ where
     }
 }
 
+///Creates a new mpmc broadcast channel returning both a sender and receiver
 pub fn channel<T>(size: usize) -> (sender::BroadcastSender<T>, receiver::BroadcastReceiver<T>) {
     let core = Arc::new(Core::new(size));
     let inner_sender = sender::SenderCore::from(core.clone());
