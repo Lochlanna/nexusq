@@ -1,4 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use std::fmt::{Display, Formatter};
 use std::sync::mpsc::TrySendError;
 
 use nexusq::{channel, Receiver, Sender};
@@ -181,36 +182,82 @@ fn test(
     }
 }
 
-fn nexus(num: usize) {
+fn nexus(num: usize, writers: usize, readers: usize) {
     let (sender, receiver) = channel(100);
-    test(num, 2, 2, sender, receiver);
+    test(num, writers, readers, sender, receiver);
 }
 
-fn multiq(num: usize) {
+fn multiq(num: usize, writers: usize, readers: usize) {
     let (sender, receiver) = multiqueue::broadcast_queue(100);
-    test(num, 2, 2, sender, receiver);
+    test(num, writers, readers, sender, receiver);
 }
 
-fn multiq2(num: usize) {
+fn multiq2(num: usize, writers: usize, readers: usize) {
     let (sender, receiver) = multiqueue2::broadcast_queue(100);
-    test(num, 2, 2, sender, receiver);
+    test(num, writers, readers, sender, receiver);
 }
 
-fn criterion_benchmark(c: &mut Criterion) {
+struct RunParam((usize, usize));
+impl Display for RunParam {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(format!("{},{}", self.0 .0, self.0 .1).as_str())
+    }
+}
+
+fn multi_sender_receiver(c: &mut Criterion) {
     let num = 10000;
-    let mut group = c.benchmark_group("two sender two receiver");
+
+    let mut group = c.benchmark_group("nexus");
     group.throughput(Throughput::Elements(num as u64 * 2));
-    group.bench_function(format!("nexus {}", num).as_str(), |b| {
-        b.iter(|| nexus(black_box(num)))
-    });
-    group.bench_function(format!("multiq {}", num).as_str(), |b| {
-        b.iter(|| multiq(black_box(num)))
-    });
-    group.bench_function(format!("multiq2 {}", num).as_str(), |b| {
-        b.iter(|| multiq2(black_box(num)))
-    });
-    group.finish()
+    for readers in 1..5 {
+        for writers in 1..5 {
+            let input = (writers as usize, readers as usize);
+            group.throughput(Throughput::Elements(num as u64 * writers as u64));
+            group.bench_with_input(
+                BenchmarkId::from_parameter(RunParam(input)),
+                &input,
+                |b, &input| {
+                    b.iter(|| nexus(black_box(num), black_box(input.0), black_box(input.1)));
+                },
+            );
+        }
+    }
+    group.finish();
+
+    let mut group = c.benchmark_group("multiq");
+    group.throughput(Throughput::Elements(num as u64 * 2));
+    for readers in 1..5 {
+        for writers in 1..5 {
+            let input = (writers as usize, readers as usize);
+            group.throughput(Throughput::Elements(num as u64 * writers as u64));
+            group.bench_with_input(
+                BenchmarkId::from_parameter(RunParam(input)),
+                &input,
+                |b, &input| {
+                    b.iter(|| multiq(black_box(num), black_box(input.0), black_box(input.1)));
+                },
+            );
+        }
+    }
+    group.finish();
+
+    let mut group = c.benchmark_group("multiq2");
+    group.throughput(Throughput::Elements(num as u64 * 2));
+    for readers in 1..5 {
+        for writers in 1..5 {
+            let input = (writers as usize, readers as usize);
+            group.throughput(Throughput::Elements(num as u64 * writers as u64));
+            group.bench_with_input(
+                BenchmarkId::from_parameter(RunParam(input)),
+                &input,
+                |b, &input| {
+                    b.iter(|| multiq2(black_box(num), black_box(input.0), black_box(input.1)));
+                },
+            );
+        }
+    }
+    group.finish();
 }
 
-criterion_group!(benches, criterion_benchmark);
+criterion_group!(benches, multi_sender_receiver);
 criterion_main!(benches);

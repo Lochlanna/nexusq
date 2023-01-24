@@ -37,5 +37,5 @@ name = "one_to_one"
 harness = false
 
 [[bench]]
-name = "two_to_two"
+name = "bench"
 harness = false
