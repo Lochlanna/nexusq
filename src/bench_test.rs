@@ -1,8 +1,8 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::fmt::{Display, Formatter};
 use std::sync::mpsc::TrySendError;
+use std::time::Instant;
 
-use nexusq::{channel, Receiver, Sender};
+use crate::{channel, Receiver, Sender};
 use workerpool::thunk::{Thunk, ThunkWorker};
 use workerpool::Pool;
 
@@ -12,7 +12,7 @@ trait TestReceiver: Send + 'static {
     fn another(&self) -> Self;
 }
 
-impl<T> TestReceiver for nexusq::BroadcastReceiver<T>
+impl<T> TestReceiver for crate::BroadcastReceiver<T>
 where
     T: 'static + Clone + Send,
 {
@@ -80,7 +80,7 @@ trait TestSender<T>: Send + 'static {
     fn another(&self) -> Self;
 }
 
-impl<T> TestSender<T> for nexusq::BroadcastSender<T>
+impl<T> TestSender<T> for crate::BroadcastSender<T>
 where
     T: 'static + Clone + Send,
 {
@@ -132,17 +132,19 @@ where
 }
 
 #[inline(always)]
-fn read_n(mut receiver: impl TestReceiver + 'static, num_to_read: usize) {
-    for _ in 0..num_to_read {
+fn read_n(mut receiver: impl TestReceiver + 'static, num_to_read: usize) -> bool {
+    for i in 0..num_to_read {
         let _ = receiver.test_recv();
     }
+    true
 }
 
 #[inline(always)]
-fn write_n(mut sender: impl TestSender<usize> + 'static, num_to_write: usize) {
+fn write_n(mut sender: impl TestSender<usize> + 'static, num_to_write: usize) -> bool {
     for i in 0..num_to_write {
         sender.test_send(i);
     }
+    true
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -153,9 +155,9 @@ fn test(
     num_readers: usize,
     sender: impl TestSender<usize>,
     receiver: impl TestReceiver,
-    pool: &Pool<ThunkWorker<()>>,
-    tx: &std::sync::mpsc::Sender<()>,
-    rx: &mut std::sync::mpsc::Receiver<()>,
+    pool: &Pool<ThunkWorker<bool>>,
+    tx: &std::sync::mpsc::Sender<bool>,
+    rx: &mut std::sync::mpsc::Receiver<bool>,
 ) {
     for _ in 0..num_readers {
         let new_receiver = receiver.another();
@@ -182,11 +184,11 @@ fn nexus(
     num: usize,
     writers: usize,
     readers: usize,
-    pool: &Pool<ThunkWorker<()>>,
-    tx: &std::sync::mpsc::Sender<()>,
-    rx: &mut std::sync::mpsc::Receiver<()>,
+    pool: &Pool<ThunkWorker<bool>>,
+    tx: &std::sync::mpsc::Sender<bool>,
+    rx: &mut std::sync::mpsc::Receiver<bool>,
 ) {
-    let (sender, receiver) = channel(100);
+    let (sender, receiver) = crate::channel(100);
     test(num, writers, readers, sender, receiver, pool, tx, rx);
 }
 
@@ -194,9 +196,9 @@ fn multiq(
     num: usize,
     writers: usize,
     readers: usize,
-    pool: &Pool<ThunkWorker<()>>,
-    tx: &std::sync::mpsc::Sender<()>,
-    rx: &mut std::sync::mpsc::Receiver<()>,
+    pool: &Pool<ThunkWorker<bool>>,
+    tx: &std::sync::mpsc::Sender<bool>,
+    rx: &mut std::sync::mpsc::Receiver<bool>,
 ) {
     let (sender, receiver) = multiqueue::broadcast_queue(100);
     test(num, writers, readers, sender, receiver, pool, tx, rx);
@@ -206,9 +208,9 @@ fn multiq2(
     num: usize,
     writers: usize,
     readers: usize,
-    pool: &Pool<ThunkWorker<()>>,
-    tx: &std::sync::mpsc::Sender<()>,
-    rx: &mut std::sync::mpsc::Receiver<()>,
+    pool: &Pool<ThunkWorker<bool>>,
+    tx: &std::sync::mpsc::Sender<bool>,
+    rx: &mut std::sync::mpsc::Receiver<bool>,
 ) {
     let (sender, receiver) = multiqueue2::broadcast_queue(100);
     test(num, writers, readers, sender, receiver, pool, tx, rx);
@@ -221,62 +223,22 @@ impl Display for RunParam {
     }
 }
 
-fn throughput(c: &mut Criterion) {
+#[test]
+fn test_bench() {
     let num = 10000;
-    let max_writers = 3;
-    let max_readers = 3;
+    let writers = 2;
+    let readers = 1;
+    let iterations = 1;
 
-    let pool = Pool::<ThunkWorker<()>>::new(max_writers + max_readers);
+    let pool = Pool::<ThunkWorker<bool>>::new(writers + readers);
     let (mut tx, mut rx) = std::sync::mpsc::channel();
 
-    let mut group = c.benchmark_group("nexus");
-    for readers in 1..max_readers {
-        for writers in 1..max_writers {
-            let input = (writers, readers);
-            println!("input is {}", RunParam(input));
-            group.throughput(Throughput::Elements(num as u64 * writers as u64));
-            group.bench_with_input(
-                BenchmarkId::from_parameter(RunParam(input)),
-                &input,
-                |b, &input| {
-                    b.iter(|| black_box(nexus(num, input.0, input.1, &pool, &tx, &mut rx)));
-                },
-            );
-        }
+    let start = Instant::now();
+    for _ in 0..iterations {
+        nexus(num, writers, readers, &pool, &tx, &mut rx)
     }
-    group.finish();
-
-    let mut group = c.benchmark_group("multiq");
-    for readers in 1..max_readers {
-        for writers in 1..max_writers {
-            let input = (writers, readers);
-            group.throughput(Throughput::Elements(num as u64 * writers as u64));
-            group.bench_with_input(
-                BenchmarkId::from_parameter(RunParam(input)),
-                &input,
-                |b, &input| {
-                    b.iter(|| black_box(multiq(num, input.0, input.1, &pool, &mut tx, &mut rx)));
-                },
-            );
-        }
-    }
-    group.finish();
-
-    let mut group = c.benchmark_group("multiq2");
-    for readers in 1..max_readers {
-        for writers in 1..max_writers {
-            let input = (writers, readers);
-            group.throughput(Throughput::Elements(num as u64 * writers as u64));
-            group.bench_with_input(
-                BenchmarkId::from_parameter(RunParam(input)),
-                &input,
-                |b, &input| {
-                    b.iter(|| black_box(multiq2(num, input.0, input.1, &pool, &mut tx, &mut rx)));
-                },
-            );
-        }
-    }
-    group.finish();
+    let elapsed = start.elapsed();
+    let giga_throughput =
+        (num * writers * iterations) as f64 / elapsed.as_secs_f64() / 1000000000_f64;
+    println!("throughput is {} gigamessages/second", giga_throughput);
 }
-criterion_group!(benches, throughput);
-criterion_main!(benches);
