@@ -204,13 +204,15 @@ impl Display for RunParam {
     }
 }
 
-fn multi_sender_receiver(c: &mut Criterion) {
+fn throughput(c: &mut Criterion) {
     let num = 10000;
+    let max_writers = 4;
+    let max_readers = 4;
 
     let mut group = c.benchmark_group("nexus");
     group.throughput(Throughput::Elements(num as u64 * 2));
-    for readers in 1..5 {
-        for writers in 1..5 {
+    for readers in 1..max_readers {
+        for writers in 1..max_writers {
             let input = (writers as usize, readers as usize);
             group.throughput(Throughput::Elements(num as u64 * writers as u64));
             group.bench_with_input(
@@ -226,8 +228,8 @@ fn multi_sender_receiver(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("multiq");
     group.throughput(Throughput::Elements(num as u64 * 2));
-    for readers in 1..5 {
-        for writers in 1..5 {
+    for readers in 1..max_readers {
+        for writers in 1..max_writers {
             let input = (writers as usize, readers as usize);
             group.throughput(Throughput::Elements(num as u64 * writers as u64));
             group.bench_with_input(
@@ -243,8 +245,8 @@ fn multi_sender_receiver(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("multiq2");
     group.throughput(Throughput::Elements(num as u64 * 2));
-    for readers in 1..5 {
-        for writers in 1..5 {
+    for readers in 1..max_readers {
+        for writers in 1..max_writers {
             let input = (writers as usize, readers as usize);
             group.throughput(Throughput::Elements(num as u64 * writers as u64));
             group.bench_with_input(
@@ -259,5 +261,5 @@ fn multi_sender_receiver(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, multi_sender_receiver);
+criterion_group!(benches, throughput);
 criterion_main!(benches);
