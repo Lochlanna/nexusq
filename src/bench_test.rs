@@ -1,8 +1,9 @@
 use std::fmt::{Display, Formatter};
 use std::sync::mpsc::TrySendError;
-use std::time::Instant;
+use std::thread;
+use std::time::{Duration, Instant};
 
-use crate::{channel, Receiver, Sender};
+use crate::{Receiver, Sender};
 use workerpool::thunk::{Thunk, ThunkWorker};
 use workerpool::Pool;
 
@@ -167,8 +168,9 @@ fn test(
         )
     }
     drop(receiver);
+    thread::sleep(Duration::from_millis(10));
 
-    for _ in 0..num_readers {
+    for _ in 0..num_writers {
         let new_sender = sender.another();
         pool.execute_to(
             tx.clone(),
@@ -225,10 +227,10 @@ impl Display for RunParam {
 
 #[test]
 fn test_bench() {
-    let num = 10000;
+    let num = 1000;
     let writers = 2;
     let readers = 1;
-    let iterations = 1;
+    let iterations = 10;
 
     let pool = Pool::<ThunkWorker<bool>>::new(writers + readers);
     let (mut tx, mut rx) = std::sync::mpsc::channel();
@@ -238,7 +240,6 @@ fn test_bench() {
         nexus(num, writers, readers, &pool, &tx, &mut rx)
     }
     let elapsed = start.elapsed();
-    let giga_throughput =
-        (num * writers * iterations) as f64 / elapsed.as_secs_f64() / 1000000000_f64;
-    println!("throughput is {} gigamessages/second", giga_throughput);
+    let giga_throughput = (num * writers * iterations) as f64 / elapsed.as_secs_f64() / 1000000_f64;
+    println!("throughput is {} million/second", giga_throughput);
 }

@@ -16,7 +16,7 @@ exclude = ["/.*"]
 [dependencies]
 thiserror = "1.0.38"
 event-listener = "2.5.3"
-parking_lot = "0.12.1"
+parking_lot = { version = "0.12.1"}
 crossbeam-utils = "0.8.14"
 async-trait = "0.1.63"
 
@@ -32,14 +32,14 @@ lto=true
 codegen-units=1
 incremental=false
 
-[profile.test]
-debug=true
-debug-assertions=false
-overflow-checks=false
-opt-level=3
-lto=true
-codegen-units=1
-incremental=false
+#[profile.test]
+#debug=true
+#debug-assertions=false
+#overflow-checks=false
+#opt-level=3
+#lto=true
+#codegen-units=1
+#incremental=false
 
 [[bench]]
 name = "bench"

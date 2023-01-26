@@ -166,7 +166,7 @@ fn test(
     }
     drop(receiver);
 
-    for _ in 0..num_readers {
+    for _ in 0..num_writers {
         let new_sender = sender.another();
         pool.execute_to(
             tx.clone(),

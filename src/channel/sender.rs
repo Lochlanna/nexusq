@@ -158,7 +158,7 @@ where
             .fetch_add(num_to_claim, Ordering::Release);
         let tail = claimed - self.capacity;
 
-        if self.cached_slowest_reader != -1 && self.cached_slowest_reader > tail {
+        if tail < -1 || (self.cached_slowest_reader != -1 && self.cached_slowest_reader > tail) {
             return Ok(claimed);
         }
 
