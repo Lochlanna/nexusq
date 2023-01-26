@@ -223,8 +223,8 @@ impl Display for RunParam {
 
 fn throughput(c: &mut Criterion) {
     let num = 10000;
-    let max_writers = 3;
-    let max_readers = 3;
+    let max_writers = 4;
+    let max_readers = 4;
 
     let pool = Pool::<ThunkWorker<()>>::new(max_writers + max_readers);
     let (mut tx, mut rx) = std::sync::mpsc::channel();

@@ -1,5 +1,5 @@
 # Nexusq
-**A fast multi producer multi consumer broadcast channel 
+**A multi producer multi consumer broadcast channel 
 based on [LMAX Disruptor](https://github.com/LMAX-Exchange/disruptor)**
 
 ## What is it?
@@ -15,10 +15,10 @@ Development of Nexusq has been a personal learning project and there are no guar
 it is correct.
 
 # Benchmarks
-|         | 1w,1r  | 1w,2r  | 1w,3r  | 2w,1r  | 2w,2r  | 2w,3r  | 3w,1r  | 3w,2r  | 3w,3r  |
+|         | 1w,1r  | 2w,1r  | 3w,1r  | 1w,2r  | 2w,2r  | 3w,2r  | 1w,3r  | 2w,3r  | 3w,3r  |
 |---------|--------|--------|--------|--------|--------|--------|--------|--------|--------|
-| nexusq  | 24.456 | 15.825 | 10.036 | 13.745 | 9.0724 | 6.5236 | 8.967  | 4.1999 | 2.0336 |
-| multi   | 16.404 | 9.2243 | 5.2459 | 13.937 | 5.624  | 4.6864 | 8.8758 | 6.2498 | 4.8834 |
-| multiq2 | 17.046 | 10.787 | 6.7643 | 11.818 | 6.2914 | 4.9649 | 7.3721 | 6.3057 | 5.8492 |
+| nexusq  | 26.945 | 13.651 | 9.112  | 17.158 | 8.6075 | 3.822  | 10.282 | 6.5375 | 1.9437 |
+| multiq  | 19.503 | 15.392 | 14.753 | 16.412 | 11.519 | 6.8163 | 10.345 | 4.9533 | 4.9182 |
+| multiq2 | 13.94  | 12.128 | 7.9346 | 17.009 | 11.239 | 6.5446 | 12.122 | 5.0413 | 6.0842 |
 
 ![benchmark results](benchmark_results/bench.jpg)
