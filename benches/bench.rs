@@ -1,6 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::fmt::{Display, Formatter};
 use std::sync::mpsc::TrySendError;
+use std::time::{Duration, Instant};
 
 use nexusq::{channel, Receiver, Sender};
 use workerpool::thunk::{Thunk, ThunkWorker};
@@ -185,9 +186,16 @@ fn nexus(
     pool: &Pool<ThunkWorker<()>>,
     tx: &std::sync::mpsc::Sender<()>,
     rx: &mut std::sync::mpsc::Receiver<()>,
-) {
-    let (sender, receiver) = channel(100);
-    test(num, writers, readers, sender, receiver, pool, tx, rx);
+    iters: u64,
+) -> Duration {
+    let mut total_duration = Duration::new(0, 0);
+    for _ in 0..iters {
+        let (sender, receiver) = channel(100);
+        let start = Instant::now();
+        black_box(test(num, writers, readers, sender, receiver, pool, tx, rx));
+        total_duration += start.elapsed();
+    }
+    total_duration.div_f64(iters as f64)
 }
 
 fn multiq(
@@ -197,9 +205,16 @@ fn multiq(
     pool: &Pool<ThunkWorker<()>>,
     tx: &std::sync::mpsc::Sender<()>,
     rx: &mut std::sync::mpsc::Receiver<()>,
-) {
-    let (sender, receiver) = multiqueue::broadcast_queue(100);
-    test(num, writers, readers, sender, receiver, pool, tx, rx);
+    iters: u64,
+) -> Duration {
+    let mut total_duration = Duration::new(0, 0);
+    for _ in 0..iters {
+        let (sender, receiver) = multiqueue::broadcast_queue(100);
+        let start = Instant::now();
+        black_box(test(num, writers, readers, sender, receiver, pool, tx, rx));
+        total_duration += start.elapsed();
+    }
+    total_duration.div_f64(iters as f64)
 }
 
 fn multiq2(
@@ -209,9 +224,16 @@ fn multiq2(
     pool: &Pool<ThunkWorker<()>>,
     tx: &std::sync::mpsc::Sender<()>,
     rx: &mut std::sync::mpsc::Receiver<()>,
-) {
-    let (sender, receiver) = multiqueue2::broadcast_queue(100);
-    test(num, writers, readers, sender, receiver, pool, tx, rx);
+    iters: u64,
+) -> Duration {
+    let mut total_duration = Duration::new(0, 0);
+    for _ in 0..iters {
+        let (sender, receiver) = multiqueue2::broadcast_queue(100);
+        let start = Instant::now();
+        black_box(test(num, writers, readers, sender, receiver, pool, tx, rx));
+        total_duration += start.elapsed();
+    }
+    total_duration.div_f64(iters as f64)
 }
 
 struct RunParam((usize, usize));
@@ -223,8 +245,8 @@ impl Display for RunParam {
 
 fn throughput(c: &mut Criterion) {
     let num = 10000;
-    let max_writers = 4;
-    let max_readers = 4;
+    let max_writers = 3;
+    let max_readers = 3;
 
     let pool = Pool::<ThunkWorker<()>>::new(max_writers + max_readers);
     let (mut tx, mut rx) = std::sync::mpsc::channel();
@@ -239,7 +261,9 @@ fn throughput(c: &mut Criterion) {
                 BenchmarkId::from_parameter(RunParam(input)),
                 &input,
                 |b, &input| {
-                    b.iter(|| black_box(nexus(num, input.0, input.1, &pool, &tx, &mut rx)));
+                    b.iter_custom(|iters| {
+                        black_box(nexus(num, input.0, input.1, &pool, &tx, &mut rx, iters))
+                    });
                 },
             );
         }
@@ -255,7 +279,9 @@ fn throughput(c: &mut Criterion) {
                 BenchmarkId::from_parameter(RunParam(input)),
                 &input,
                 |b, &input| {
-                    b.iter(|| black_box(multiq(num, input.0, input.1, &pool, &mut tx, &mut rx)));
+                    b.iter_custom(|iters| {
+                        black_box(multiq(num, input.0, input.1, &pool, &tx, &mut rx, iters))
+                    });
                 },
             );
         }
@@ -271,7 +297,9 @@ fn throughput(c: &mut Criterion) {
                 BenchmarkId::from_parameter(RunParam(input)),
                 &input,
                 |b, &input| {
-                    b.iter(|| black_box(multiq2(num, input.0, input.1, &pool, &mut tx, &mut rx)));
+                    b.iter_custom(|iters| {
+                        black_box(multiq2(num, input.0, input.1, &pool, &tx, &mut rx, iters))
+                    });
                 },
             );
         }
