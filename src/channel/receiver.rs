@@ -1,5 +1,5 @@
 use super::*;
-use crate::channel::tracker::Tracker;
+use crate::channel::tracker::{ObservableCell, Tracker};
 use crate::BroadcastSender;
 use async_trait::async_trait;
 use core::slice;
@@ -134,7 +134,7 @@ where
 pub(crate) struct ReceiverCore<T, TR: Tracker> {
     disruptor: Arc<Core<T, TR>>,
     internal_cursor: isize,
-    shared_cursor: ManuallyDrop<Arc<AtomicUsize>>,
+    shared_cursor: ManuallyDrop<Arc<ObservableCell>>,
     capacity: isize,
 }
 
@@ -197,8 +197,7 @@ where
     #[inline(always)]
     fn increment_cursor(&mut self) {
         self.internal_cursor += 1;
-        self.shared_cursor
-            .store(self.internal_cursor as usize, Ordering::Release);
+        self.shared_cursor.store(self.internal_cursor as usize);
     }
 }
 
@@ -231,7 +230,6 @@ where
             value = (*self.disruptor.ring).get_unchecked(index).clone();
         }
         self.increment_cursor();
-        self.disruptor.reader_move.notify(usize::MAX);
         Ok(value)
     }
 

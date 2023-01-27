@@ -227,10 +227,10 @@ impl Display for RunParam {
 
 #[test]
 fn test_bench() {
-    let num = 1000;
+    let num = 10000;
     let writers = 2;
     let readers = 1;
-    let iterations = 10;
+    let iterations = 1000;
 
     let pool = Pool::<ThunkWorker<bool>>::new(writers + readers);
     let (mut tx, mut rx) = std::sync::mpsc::channel();

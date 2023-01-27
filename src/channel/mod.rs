@@ -15,7 +15,6 @@ pub(crate) struct Core<T, TR> {
     claimed: CachePadded<AtomicIsize>,
     committed: CachePadded<AtomicIsize>,
     // is there a better way than events?
-    reader_move: Event,
     writer_move: Event,
     // Reference to each reader to get their position. It should be sorted(how..?)
     readers: TR,
@@ -53,7 +52,6 @@ where
             capacity: capacity as isize,
             claimed: CachePadded::new(AtomicIsize::new(0)),
             committed: CachePadded::new(AtomicIsize::new(-1)),
-            reader_move: Default::default(),
             writer_move: Default::default(),
             readers: Default::default(),
         }

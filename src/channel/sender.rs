@@ -158,25 +158,17 @@ where
             .fetch_add(num_to_claim, Ordering::Release);
         let tail = claimed - self.capacity;
 
-        if tail < -1 || (self.cached_slowest_reader != -1 && self.cached_slowest_reader > tail) {
+        if tail <= -1 || (self.cached_slowest_reader != -1 && self.cached_slowest_reader > tail) {
             return Ok(claimed);
         }
 
         let mut slowest_reader = self.disruptor.readers.slowest(tail);
 
-        while slowest_reader <= tail {
-            let listener = self.disruptor.reader_move.listen();
-            // the reader may have moved before we managed to register the listener so
-            // we need to check again before we wait. If a reader moves between now and when
-            // we call wait it should return immediately
-            slowest_reader = self.disruptor.readers.slowest(tail);
-            if slowest_reader > tail {
-                break;
-            }
-            listener.wait();
+        while let Some(slowest_cell) = slowest_reader.1 {
+            slowest_cell.wait_for_completion(tail as usize);
             slowest_reader = self.disruptor.readers.slowest(tail);
         }
-        self.cached_slowest_reader = slowest_reader;
+        self.cached_slowest_reader = slowest_reader.0;
         // TODO check if there is another writer writing to a different ID but the same cell.
 
         Ok(claimed)
@@ -198,19 +190,11 @@ where
 
         let mut slowest_reader = self.disruptor.readers.slowest(tail);
 
-        while slowest_reader <= tail {
-            let listener = self.disruptor.reader_move.listen();
-            // the reader may have moved before we managed to register the listener so
-            // we need to check again before we wait. If a reader moves between now and when
-            // we call wait it should return immediately
-            slowest_reader = self.disruptor.readers.slowest(tail);
-            if slowest_reader > tail {
-                break;
-            }
-            listener.await;
+        while let Some(slowest_cell) = slowest_reader.1 {
+            slowest_cell.async_wait_for_completion(tail as usize).await;
             slowest_reader = self.disruptor.readers.slowest(tail);
         }
-        self.cached_slowest_reader = slowest_reader;
+        self.cached_slowest_reader = slowest_reader.0;
         // TODO check if there is another writer writing to a different ID but the same cell.
 
         Ok(claimed)
