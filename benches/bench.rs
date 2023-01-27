@@ -146,39 +146,6 @@ fn write_n(mut sender: impl TestSender<usize> + 'static, num_to_write: usize) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-#[inline(always)]
-fn test(
-    num_elements: usize,
-    num_writers: usize,
-    num_readers: usize,
-    sender: impl TestSender<usize>,
-    receiver: impl TestReceiver,
-    pool: &Pool<ThunkWorker<()>>,
-    tx: &std::sync::mpsc::Sender<()>,
-    rx: &mut std::sync::mpsc::Receiver<()>,
-) {
-    for _ in 0..num_readers {
-        let new_receiver = receiver.another();
-        pool.execute_to(
-            tx.clone(),
-            Thunk::of(move || read_n(new_receiver, num_elements * num_writers)),
-        )
-    }
-    drop(receiver);
-
-    for _ in 0..num_writers {
-        let new_sender = sender.another();
-        pool.execute_to(
-            tx.clone(),
-            Thunk::of(move || write_n(new_sender, num_elements)),
-        )
-    }
-    drop(sender);
-    let num = rx.iter().take(num_readers + num_writers).count();
-    assert_eq!(num, num_readers + num_writers);
-}
-
 fn nexus(
     num: usize,
     writers: usize,
@@ -191,11 +158,24 @@ fn nexus(
     let mut total_duration = Duration::new(0, 0);
     for _ in 0..iters {
         let (sender, receiver) = channel(100);
+        let mut receivers: Vec<_> = (0..readers - 1).map(|_| receiver.another()).collect();
+        let mut senders: Vec<_> = (0..writers - 1).map(|_| sender.another()).collect();
+        receivers.push(receiver);
+        senders.push(sender);
+
         let start = Instant::now();
-        black_box(test(num, writers, readers, sender, receiver, pool, tx, rx));
+        for r in receivers {
+            pool.execute_to(tx.clone(), Thunk::of(move || read_n(r, num * writers)))
+        }
+        for s in senders {
+            pool.execute_to(tx.clone(), Thunk::of(move || write_n(s, num)))
+        }
+        let num = rx.iter().take(readers + writers).count();
         total_duration += start.elapsed();
+        assert_eq!(num, readers + writers);
     }
-    total_duration.div_f64(iters as f64)
+
+    total_duration
 }
 
 fn multiq(
@@ -210,11 +190,26 @@ fn multiq(
     let mut total_duration = Duration::new(0, 0);
     for _ in 0..iters {
         let (sender, receiver) = multiqueue::broadcast_queue(100);
+
+        let mut receivers: Vec<_> = (0..readers - 1).map(|_| receiver.another()).collect();
+        let mut senders: Vec<_> = (0..writers - 1).map(|_| sender.another()).collect();
+        receivers.push(receiver);
+        senders.push(sender);
+
         let start = Instant::now();
-        black_box(test(num, writers, readers, sender, receiver, pool, tx, rx));
+        for r in receivers {
+            pool.execute_to(tx.clone(), Thunk::of(move || read_n(r, num * writers)))
+        }
+
+        for s in senders {
+            pool.execute_to(tx.clone(), Thunk::of(move || write_n(s, num)))
+        }
+        let num = rx.iter().take(readers + writers).count();
         total_duration += start.elapsed();
+        assert_eq!(num, readers + writers);
     }
-    total_duration.div_f64(iters as f64)
+
+    total_duration
 }
 
 fn multiq2(
@@ -229,11 +224,26 @@ fn multiq2(
     let mut total_duration = Duration::new(0, 0);
     for _ in 0..iters {
         let (sender, receiver) = multiqueue2::broadcast_queue(100);
+
+        let mut receivers: Vec<_> = (0..readers - 1).map(|_| receiver.another()).collect();
+        let mut senders: Vec<_> = (0..writers - 1).map(|_| sender.another()).collect();
+        receivers.push(receiver);
+        senders.push(sender);
+
         let start = Instant::now();
-        black_box(test(num, writers, readers, sender, receiver, pool, tx, rx));
+        for r in receivers {
+            pool.execute_to(tx.clone(), Thunk::of(move || read_n(r, num * writers)))
+        }
+
+        for s in senders {
+            pool.execute_to(tx.clone(), Thunk::of(move || write_n(s, num)))
+        }
+        let num = rx.iter().take(readers + writers).count();
         total_duration += start.elapsed();
+        assert_eq!(num, readers + writers);
     }
-    total_duration.div_f64(iters as f64)
+
+    total_duration
 }
 
 struct RunParam((usize, usize));
@@ -245,17 +255,16 @@ impl Display for RunParam {
 
 fn throughput(c: &mut Criterion) {
     let num = 10000;
-    let max_writers = 3;
-    let max_readers = 3;
+    let max_writers = 4;
+    let max_readers = 4;
 
     let pool = Pool::<ThunkWorker<()>>::new(max_writers + max_readers);
-    let (mut tx, mut rx) = std::sync::mpsc::channel();
+    let (tx, mut rx) = std::sync::mpsc::channel();
 
     let mut group = c.benchmark_group("nexus");
     for readers in 1..max_readers {
         for writers in 1..max_writers {
             let input = (writers, readers);
-            println!("input is {}", RunParam(input));
             group.throughput(Throughput::Elements(num as u64 * writers as u64));
             group.bench_with_input(
                 BenchmarkId::from_parameter(RunParam(input)),

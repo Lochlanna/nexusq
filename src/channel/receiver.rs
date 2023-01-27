@@ -246,21 +246,20 @@ where
             }
         };
 
-        let listener = self.disruptor.writer_move.listen();
-        // try again as the listener can take some time to be registered and cause us to miss things
-        let immediate = self.try_read_next();
-        match &immediate {
-            Ok(_) => return immediate,
-            Err(err) => {
-                if !matches!(err, ReaderError::NoNewData) {
-                    return immediate;
-                }
-            }
-        };
-        listener.wait();
-
         loop {
-            //TODO this loop shouldn't be needed here. What's going on...
+            let listener = self.disruptor.writer_move.listen();
+            // try again as the listener can take some time to be registered and cause us to miss things
+            let immediate = self.try_read_next();
+            match &immediate {
+                Ok(_) => return immediate,
+                Err(err) => {
+                    if !matches!(err, ReaderError::NoNewData) {
+                        return immediate;
+                    }
+                }
+            };
+            listener.wait();
+
             let immediate = self.try_read_next();
             match &immediate {
                 Ok(_) => return immediate,
@@ -287,23 +286,21 @@ where
             };
         }
 
-        let listener = self.disruptor.writer_move.listen();
-        // try again as the listener can take some time to be registered and cause us to miss things
-        {
-            let immediate = self.try_read_next();
-            match &immediate {
-                Ok(_) => return immediate,
-                Err(err) => {
-                    if !matches!(err, ReaderError::NoNewData) {
-                        return immediate;
-                    }
-                }
-            };
-        }
-        listener.await;
-
         loop {
-            //TODO this loop shouldn't be needed here. What's going on...
+            let listener = self.disruptor.writer_move.listen();
+            // try again as the listener can take some time to be registered and cause us to miss things
+            {
+                let immediate = self.try_read_next();
+                match &immediate {
+                    Ok(_) => return immediate,
+                    Err(err) => {
+                        if !matches!(err, ReaderError::NoNewData) {
+                            return immediate;
+                        }
+                    }
+                };
+            }
+            listener.await;
             let immediate = self.try_read_next();
             match &immediate {
                 Ok(_) => return immediate,
