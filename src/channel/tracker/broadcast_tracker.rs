@@ -64,8 +64,7 @@ impl Tracker for BroadcastTracker {
         let mut slowest = isize::MAX;
         let mut slowest_cell = None;
         for cell in read_lock.iter() {
-            //TODO Can we actually use relaxed here?
-            let position = cell.load(Ordering::Relaxed);
+            let position = cell.load(Ordering::Acquire);
             if position == super::UNUSED {
                 continue;
             }

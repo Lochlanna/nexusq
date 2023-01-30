@@ -3,6 +3,8 @@ use crate::channel::tracker::{ObservableCell, Tracker};
 use crate::BroadcastSender;
 use async_trait::async_trait;
 use core::slice;
+use std::io;
+use std::io::Write;
 use std::mem::ManuallyDrop;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -62,10 +64,11 @@ impl<T> BroadcastReceiver<T> {
         self.into()
     }
 }
+
 #[async_trait]
 impl<T> Receiver for BroadcastReceiver<T>
 where
-    T: Clone,
+    T: Clone + Send,
 {
     type Item = T;
 
@@ -272,47 +275,6 @@ where
         }
     }
 
-    /// Async version of [`ReceiverCore::recv`]
-    pub async fn async_recv(&mut self) -> Result<T, ReaderError> {
-        {
-            let immediate = self.try_read_next();
-            match &immediate {
-                Ok(_) => return immediate,
-                Err(err) => {
-                    if !matches!(err, ReaderError::NoNewData) {
-                        return immediate;
-                    }
-                }
-            };
-        }
-
-        loop {
-            let listener = self.disruptor.writer_move.listen();
-            // try again as the listener can take some time to be registered and cause us to miss things
-            {
-                let immediate = self.try_read_next();
-                match &immediate {
-                    Ok(_) => return immediate,
-                    Err(err) => {
-                        if !matches!(err, ReaderError::NoNewData) {
-                            return immediate;
-                        }
-                    }
-                };
-            }
-            listener.await;
-            let immediate = self.try_read_next();
-            match &immediate {
-                Ok(_) => return immediate,
-                Err(err) => {
-                    if !matches!(err, ReaderError::NoNewData) {
-                        return immediate;
-                    }
-                }
-            };
-        }
-    }
-
     /// Read as many values as are available. Results are stored in the argument `result`
     ///
     /// This operation is more efficient than reading values individually as it only has to
@@ -377,6 +339,50 @@ where
             }
         }
         Ok(())
+    }
+}
+
+impl<T, TR> ReceiverCore<T, TR>
+where
+    T: Clone + Send,
+    TR: Tracker,
+{
+    /// Async version of [`ReceiverCore::recv`]
+    pub async fn async_recv(&mut self) -> Result<T, ReaderError> {
+        let immediate = self.try_read_next();
+        match &immediate {
+            Ok(_) => return immediate,
+            Err(err) => {
+                if !matches!(err, ReaderError::NoNewData) {
+                    return immediate;
+                }
+            }
+        };
+
+        loop {
+            let listener = self.disruptor.writer_move.listen();
+            // try again as the listener can take some time to be registered and cause us to miss things
+            let immediate = self.try_read_next();
+            match &immediate {
+                Ok(_) => return immediate,
+                Err(err) => {
+                    if !matches!(err, ReaderError::NoNewData) {
+                        return immediate;
+                    }
+                }
+            };
+            listener.await;
+
+            let immediate = self.try_read_next();
+            match &immediate {
+                Ok(_) => return immediate,
+                Err(err) => {
+                    if !matches!(err, ReaderError::NoNewData) {
+                        return immediate;
+                    }
+                }
+            };
+        }
     }
 }
 

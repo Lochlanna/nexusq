@@ -3,6 +3,8 @@ use crate::channel::tracker::broadcast_tracker::BroadcastTracker;
 use crate::channel::tracker::Tracker;
 use crate::BroadcastReceiver;
 use async_trait::async_trait;
+use std::io;
+use std::io::Write;
 use std::mem::forget;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -165,6 +167,9 @@ where
         let mut slowest_reader = self.disruptor.readers.slowest(tail);
 
         while let Some(slowest_cell) = slowest_reader.1 {
+            if slowest_reader.0 > claimed {
+                break;
+            }
             slowest_cell.wait_for_completion(tail as usize);
             slowest_reader = self.disruptor.readers.slowest(tail);
         }
@@ -184,13 +189,16 @@ where
             .fetch_add(num_to_claim, Ordering::Release);
         let tail = claimed - self.capacity;
 
-        if self.cached_slowest_reader != -1 && self.cached_slowest_reader > tail {
+        if tail <= -1 || (self.cached_slowest_reader != -1 && self.cached_slowest_reader > tail) {
             return Ok(claimed);
         }
 
         let mut slowest_reader = self.disruptor.readers.slowest(tail);
 
         while let Some(slowest_cell) = slowest_reader.1 {
+            if slowest_reader.0 > claimed {
+                break;
+            }
             slowest_cell.async_wait_for_completion(tail as usize).await;
             slowest_reader = self.disruptor.readers.slowest(tail);
         }
@@ -206,7 +214,50 @@ where
     pub async fn async_send(&mut self, value: T) -> Result<(), SenderError> {
         let claimed_id = self.async_claim(1).await?;
 
-        self.internal_send(value, claimed_id)
+        let index = claimed_id as usize % self.capacity as usize;
+
+        let old_value;
+        unsafe {
+            old_value = std::mem::replace((*self.disruptor.ring).get_unchecked_mut(index), value)
+        }
+
+        // TODO what's the optimisation here
+        // wait for writers to catch up and commit their transactions
+        loop {
+            let check = || {
+                self.disruptor
+                    .committed
+                    .compare_exchange_weak(
+                        claimed_id - 1,
+                        claimed_id,
+                        Ordering::Release,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+            };
+            if check() {
+                break;
+            }
+            let listener = self.disruptor.writer_move.listen();
+            if check() {
+                break;
+            }
+            listener.await;
+            if check() {
+                break;
+            }
+        }
+        // Notify other threads that a value has been written
+        self.disruptor.writer_move.notify(usize::MAX);
+
+        // We do this at the end to ensure that we're not worrying about wierd drop functions or
+        // allocations happening during the critical path
+        if (claimed_id as usize) < self.capacity as usize {
+            forget(old_value);
+        } else {
+            drop(old_value);
+        }
+        Ok(())
     }
 
     #[inline(always)]

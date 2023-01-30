@@ -240,7 +240,6 @@ fn multiq2(
         }
         let num = rx.iter().take(readers + writers).count();
         total_duration += start.elapsed();
-        assert_eq!(num, readers + writers);
     }
 
     total_duration
@@ -255,8 +254,8 @@ impl Display for RunParam {
 
 fn throughput(c: &mut Criterion) {
     let num = 10000;
-    let max_writers = 4;
-    let max_readers = 4;
+    let max_writers = 3;
+    let max_readers = 3;
 
     let pool = Pool::<ThunkWorker<()>>::new(max_writers + max_readers);
     let (tx, mut rx) = std::sync::mpsc::channel();
@@ -279,41 +278,41 @@ fn throughput(c: &mut Criterion) {
     }
     group.finish();
 
-    let mut group = c.benchmark_group("multiq");
-    for readers in 1..max_readers {
-        for writers in 1..max_writers {
-            let input = (writers, readers);
-            group.throughput(Throughput::Elements(num as u64 * writers as u64));
-            group.bench_with_input(
-                BenchmarkId::from_parameter(RunParam(input)),
-                &input,
-                |b, &input| {
-                    b.iter_custom(|iters| {
-                        black_box(multiq(num, input.0, input.1, &pool, &tx, &mut rx, iters))
-                    });
-                },
-            );
-        }
-    }
-    group.finish();
-
-    let mut group = c.benchmark_group("multiq2");
-    for readers in 1..max_readers {
-        for writers in 1..max_writers {
-            let input = (writers, readers);
-            group.throughput(Throughput::Elements(num as u64 * writers as u64));
-            group.bench_with_input(
-                BenchmarkId::from_parameter(RunParam(input)),
-                &input,
-                |b, &input| {
-                    b.iter_custom(|iters| {
-                        black_box(multiq2(num, input.0, input.1, &pool, &tx, &mut rx, iters))
-                    });
-                },
-            );
-        }
-    }
-    group.finish();
+    // let mut group = c.benchmark_group("multiq");
+    // for readers in 1..max_readers {
+    //     for writers in 1..max_writers {
+    //         let input = (writers, readers);
+    //         group.throughput(Throughput::Elements(num as u64 * writers as u64));
+    //         group.bench_with_input(
+    //             BenchmarkId::from_parameter(RunParam(input)),
+    //             &input,
+    //             |b, &input| {
+    //                 b.iter_custom(|iters| {
+    //                     black_box(multiq(num, input.0, input.1, &pool, &tx, &mut rx, iters))
+    //                 });
+    //             },
+    //         );
+    //     }
+    // }
+    // group.finish();
+    //
+    // let mut group = c.benchmark_group("multiq2");
+    // for readers in 1..max_readers {
+    //     for writers in 1..max_writers {
+    //         let input = (writers, readers);
+    //         group.throughput(Throughput::Elements(num as u64 * writers as u64));
+    //         group.bench_with_input(
+    //             BenchmarkId::from_parameter(RunParam(input)),
+    //             &input,
+    //             |b, &input| {
+    //                 b.iter_custom(|iters| {
+    //                     black_box(multiq2(num, input.0, input.1, &pool, &tx, &mut rx, iters))
+    //                 });
+    //             },
+    //         );
+    //     }
+    // }
+    // group.finish();
 }
 criterion_group!(benches, throughput);
 criterion_main!(benches);

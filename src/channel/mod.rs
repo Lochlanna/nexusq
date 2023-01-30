@@ -87,9 +87,30 @@ mod tests {
     }
 
     #[inline(always)]
+    async fn async_read_n(
+        mut receiver: receiver::BroadcastReceiver<usize>,
+        num_to_read: usize,
+    ) -> Vec<usize> {
+        let mut results = Vec::with_capacity(num_to_read);
+        for _ in 0..num_to_read {
+            let v = receiver.async_recv().await;
+            assert!(v.is_ok());
+            results.push(v.unwrap());
+        }
+        results
+    }
+
+    #[inline(always)]
     fn write_n(mut sender: sender::BroadcastSender<usize>, num_to_write: usize) {
         for i in 0..num_to_write {
             sender.send(i).expect("couldn't send");
+        }
+    }
+
+    #[inline(always)]
+    async fn async_write_n(mut sender: sender::BroadcastSender<usize>, num_to_write: usize) {
+        for i in 0..num_to_write {
+            sender.async_send(i).await.expect("couldn't send");
         }
     }
 
@@ -130,10 +151,54 @@ mod tests {
         }
     }
 
+    #[inline(always)]
+    async fn test_async(
+        num_elements: usize,
+        num_writers: usize,
+        num_readers: usize,
+        buffer_size: usize,
+    ) {
+        let (sender, receiver) = channel(buffer_size);
+        let readers: Vec<_> = (0..num_readers)
+            .map(|_| {
+                let new_receiver = receiver.clone();
+                tokio::spawn(async_read_n(new_receiver, num_elements * num_writers))
+            })
+            .collect();
+        drop(receiver);
+        let writers: Vec<_> = (0..num_writers)
+            .map(|_| {
+                let new_sender = sender.clone();
+                tokio::spawn(async_write_n(new_sender, num_elements))
+            })
+            .collect();
+
+        futures::future::join_all(writers).await;
+        for reader in readers {
+            let res = reader.await;
+            match res {
+                Ok(res) => {
+                    assert_eq!(res.len(), num_elements * num_writers);
+                    if num_writers == 1 {
+                        let expected: Vec<usize> = (0..num_elements).collect();
+                        assert_eq!(res, expected);
+                    }
+                }
+                Err(_) => panic!("reader didnt' read enough"),
+            }
+        }
+    }
+
     #[test]
     fn single_writer_single_reader() {
         let num = 5000;
         test(num, 1, 1, 10);
+    }
+
+    #[tokio::test]
+    async fn async_single_writer_single_reader() {
+        let num = 5000;
+        test_async(num, 1, 1, 10).await;
     }
 
     #[test]
@@ -146,15 +211,50 @@ mod tests {
         assert_eq!(res, "hello world");
     }
 
+    #[tokio::test]
+    async fn async_single_writer_single_reader_clone() {
+        let (mut sender, mut receiver) = channel(10);
+        sender
+            .async_send("hello world".to_string())
+            .await
+            .expect("couldn't send");
+        let res = receiver.async_recv().await.expect("couldn't read");
+        assert_eq!(res, "hello world");
+    }
+
     #[test]
     fn single_writer_two_reader() {
         let num = 5000;
         test(num, 1, 2, 10);
     }
 
+    #[tokio::test]
+    async fn async_single_writer_two_reader() {
+        let num = 5000;
+        test_async(num, 1, 2, 10).await;
+    }
+
     #[test]
     fn two_writer_two_reader() {
         let num = 5000;
         test(num, 2, 2, 10);
+    }
+
+    #[tokio::test]
+    async fn async_one_writer_five_reader() {
+        let num = 5000;
+        test_async(num, 1, 5, 10).await;
+    }
+
+    #[tokio::test]
+    async fn async_two_writer_two_reader() {
+        let num = 5000;
+        test(num, 2, 2, 10);
+    }
+
+    #[tokio::test]
+    async fn async_two_writer_one_reader() {
+        let num = 7;
+        test_async(num, 2, 1, 5).await;
     }
 }
