@@ -127,8 +127,7 @@ where
             return Ok(claimed);
         }
 
-        self.cached_slowest_reader =
-            self.disruptor.readers.wait_for_tail(tail as usize + 1) as isize;
+        self.cached_slowest_reader = self.disruptor.readers.wait_for_tail(tail as usize) as isize;
 
         Ok(claimed)
     }

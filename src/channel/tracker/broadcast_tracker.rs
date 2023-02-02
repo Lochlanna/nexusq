@@ -84,17 +84,18 @@ impl Tracker for BroadcastTracker {
         let to_idx = to % self.counters.len();
         let previous;
         unsafe {
+            self.counters
+                .get_unchecked(to_idx)
+                .fetch_add(1, Ordering::SeqCst);
             previous = self
                 .counters
                 .get_unchecked(from_idx)
                 .fetch_sub(1, Ordering::SeqCst);
-            self.counters
-                .get_unchecked(to_idx)
-                .fetch_add(1, Ordering::SeqCst);
         }
         debug_assert!(previous > 0 && previous <= 2);
         //Assume there is at least one receiver so don't need to check here
-        if previous == 1 && from == self.tail.load(Ordering::SeqCst) {
+        let tail = self.tail.load(Ordering::SeqCst);
+        if previous == 1 && from == tail {
             if to - from == 1 {
                 //we know we are the tail so just set and go!
                 self.tail.store(to, Ordering::SeqCst);
