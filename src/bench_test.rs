@@ -96,10 +96,10 @@ fn nexus(
 
 #[test]
 fn test_bench() {
-    let num = 1000;
-    let writers = 2;
-    let readers = 2;
-    let iterations = 10;
+    let num = 10000;
+    let writers = 1;
+    let readers = 1;
+    let iterations = 100;
 
     let pool = Pool::<ThunkWorker<()>>::new(writers + readers);
     let (tx, mut rx) = std::sync::mpsc::channel();

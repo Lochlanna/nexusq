@@ -1,139 +1,208 @@
-use super::{ObservableCell, Tracker};
-use std::collections::LinkedList;
-use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
-use std::sync::Arc;
+use super::Tracker;
+use async_trait::async_trait;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug)]
 pub struct BroadcastTracker {
     // Access will always be write so no need for a more complex read write lock here.
     // It shouldn't be accessed too much and should only impede new/dying receivers not active
     // senders or receivers
-    unused_cells: parking_lot::Mutex<LinkedList<Arc<ObservableCell>>>,
-    receiver_cells: parking_lot::RwLock<Vec<Arc<ObservableCell>>>,
-    slowest_cache: AtomicIsize,
+    counters: Vec<AtomicUsize>,
+    num_receivers: AtomicUsize,
+    tail: AtomicUsize,
+    tail_move: event_listener::Event,
 }
 
-impl Default for BroadcastTracker {
-    fn default() -> Self {
-        Self {
-            unused_cells: Default::default(),
-            receiver_cells: Default::default(),
-            slowest_cache: AtomicIsize::new(-1),
+impl BroadcastTracker {
+    fn to_index(&self, v: isize) -> usize {
+        if v < 0 {
+            return 0;
         }
+        v as usize % self.counters.len()
+    }
+
+    fn chase_tail(&self, from: usize) {
+        let mut id = from;
+        loop {
+            //TODO maybe there is an optimisation here...
+            let cell;
+            unsafe {
+                cell = self.counters.get_unchecked(id % self.counters.len());
+            }
+            if cell.load(Ordering::Acquire) > 0 {
+                if cell.fetch_add(1, Ordering::SeqCst) > 0 {
+                    self.tail.store(id, Ordering::Release);
+                    if cell.fetch_sub(1, Ordering::SeqCst) > 1 {
+                        // the reader was still on this cell we have successfully se the tail
+                        break;
+                    }
+                    //keep looping
+                } else {
+                    // the receiver moved off between load and fetch_add so sub here
+                    cell.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
+            id += 1;
+        }
+        self.tail_move.notify(usize::MAX);
     }
 }
 
+#[async_trait]
 impl Tracker for BroadcastTracker {
-    fn new_receiver(&self, at: isize) -> Arc<ObservableCell> {
-        let at = at as usize;
-        //check for and claim an existing dead cell first
-        let unused_cell;
-        {
-            let mut lock = self.unused_cells.lock();
-            unused_cell = lock.pop_front();
-        }
-        if let Some(unused_cell) = unused_cell {
-            unused_cell.store(at);
-            return unused_cell;
-        }
-
-        // There are no available slots so we will have to create a new cell
-        let new_cell = Arc::new(ObservableCell::at(at));
-        let cloned_new_cell = new_cell.clone();
-        {
-            let mut write_lock = self.receiver_cells.write();
-            write_lock.push(new_cell);
-        }
-        cloned_new_cell
-    }
-
-    fn remove_receiver(&self, cell: Arc<ObservableCell>) {
-        cell.set_unused();
-        {
-            let mut lock = self.unused_cells.lock();
-            lock.push_back(cell);
+    fn new(size: usize) -> Self {
+        let mut counters = vec![];
+        counters.resize_with(size, Default::default);
+        Self {
+            counters,
+            num_receivers: Default::default(),
+            tail: Default::default(),
+            tail_move: Default::default(),
         }
     }
 
-    fn slowest(&self, min: isize) -> (isize, Option<Arc<ObservableCell>>) {
-        let cached = self.slowest_cache.load(Ordering::Acquire);
-        if cached > min {
-            return (cached, None);
+    fn new_receiver(&self) -> usize {
+        self.num_receivers.fetch_add(1, Ordering::SeqCst);
+        let tail_pos = self.tail.load(Ordering::Acquire);
+        let index = tail_pos % self.counters.len();
+        //TODO there is a race condition here!
+        unsafe {
+            self.counters
+                .get_unchecked(index)
+                .fetch_add(1, Ordering::SeqCst);
         }
-        let read_lock = self.receiver_cells.read();
-        let mut slowest = isize::MAX;
-        let mut slowest_cell = None;
-        for cell in read_lock.iter() {
-            let position = cell.load(Ordering::Acquire);
-            if position == super::UNUSED {
-                continue;
+        tail_pos
+    }
+
+    fn move_receiver(&self, from: usize, to: usize) {
+        let from_idx = from % self.counters.len();
+        let to_idx = to % self.counters.len();
+        let previous;
+        unsafe {
+            previous = self
+                .counters
+                .get_unchecked(from_idx)
+                .fetch_sub(1, Ordering::SeqCst);
+            self.counters
+                .get_unchecked(to_idx)
+                .fetch_add(1, Ordering::SeqCst);
+        }
+        debug_assert!(previous > 0);
+        if previous == 1 && from == self.tail.load(Ordering::Acquire) {
+            if to == from + 1 {
+                //we know we are the tail so just set and go!
+                self.tail.store(to, Ordering::Release);
+                self.tail_move.notify(usize::MAX);
+                return;
             }
-            let position = position as isize;
-            if position <= min {
-                return (position, Some(cell.clone()));
-            }
-            if position < slowest {
-                slowest = position;
-                slowest_cell = Some(cell);
-            }
+            // we have skipped ahead so move forward until we find and manage to set the tail
+            self.chase_tail(from);
         }
-        // cache this computation so that we may not have to do a scan next time!
-        self.slowest_cache.store(slowest, Ordering::Release);
-        if let Some(slowest_cell) = slowest_cell {
-            return (slowest, Some(slowest_cell.clone()));
-        }
-        (slowest, None)
     }
 
-    fn tidy(&self) {
-        let mut unused_cell_lock = self.unused_cells.lock();
-        unused_cell_lock.clear();
-        let mut cell_write_lock = self.receiver_cells.write();
-        cell_write_lock.retain(|v| !v.is_unused());
+    fn remove_receiver(&self, at: usize) {
+        let index = at % self.counters.len();
+        let previous;
+        unsafe {
+            previous = self
+                .counters
+                .get_unchecked(index)
+                .fetch_sub(1, Ordering::SeqCst);
+        }
+        debug_assert!(previous > 0);
+        let num_left = self.num_receivers.fetch_sub(1, Ordering::SeqCst) - 1;
+        //TODO what to do with the tail when we go to zero...??? currently will lock the sender forever!!
+        // We could return error on slowest to notify sender of this
+        if previous == 1 && at == self.tail.load(Ordering::Acquire) && num_left > 0 {
+            // we have just removed the tail receiver so we need to chase the tail to find it
+            self.chase_tail(at);
+        }
     }
 
-    fn garbage_count(&self) -> usize {
-        let unused_cell_lock = self.unused_cells.lock();
-        unused_cell_lock.len()
+    fn slowest(&self) -> usize {
+        self.tail.load(Ordering::Acquire)
+    }
+
+    fn wait_for_tail(&self, expected_tail: usize) -> usize {
+        loop {
+            let mut tail = self.tail.load(Ordering::Acquire);
+            if tail >= expected_tail {
+                return tail;
+            }
+            let listener = self.tail_move.listen();
+            tail = self.tail.load(Ordering::Acquire);
+            if self.tail.load(Ordering::Acquire) >= expected_tail {
+                return tail;
+            }
+            listener.wait()
+        }
+    }
+
+    async fn wait_for_tail_async(&self, expected_tail: usize) -> usize {
+        loop {
+            let mut tail = self.tail.load(Ordering::Acquire);
+            if tail >= expected_tail {
+                return tail;
+            }
+            let listener = self.tail_move.listen();
+            tail = self.tail.load(Ordering::Acquire);
+            if self.tail.load(Ordering::Acquire) >= expected_tail {
+                return tail;
+            }
+            listener.await
+        }
     }
 }
 
 #[cfg(test)]
 mod tracker_tests {
     use super::*;
+    use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn add_remove_receiver() {
-        let tracker = BroadcastTracker::default();
-        let shared_cursor_a = tracker.new_receiver(4);
-        assert_eq!(shared_cursor_a.load(Ordering::Acquire), 4);
-        let shared_cursor = tracker.new_receiver(6);
-        assert_eq!(shared_cursor.load(Ordering::Acquire), 6);
-        tracker.remove_receiver(shared_cursor_a.clone());
-        assert_eq!(
-            shared_cursor_a.load(Ordering::Acquire),
-            super::super::UNUSED
-        );
-        assert!(shared_cursor_a.is_unused()); // same as previous check just checks the function
-        let shared_cursor = tracker.new_receiver(7);
-        assert_eq!(shared_cursor.load(Ordering::Acquire), 7);
+        let tracker = BroadcastTracker::new(10);
+        let shared_cursor_a = tracker.new_receiver();
+        assert_eq!(tracker.counters[0].load(Ordering::Acquire), 1);
+        tracker.move_receiver(shared_cursor_a, 4);
+        assert_eq!(tracker.counters[0].load(Ordering::Acquire), 0);
+        assert_eq!(tracker.counters[4].load(Ordering::Acquire), 1);
+        assert_eq!(tracker.slowest(), 4);
+
+        let shared_cursor_b = tracker.new_receiver();
+        tracker.move_receiver(shared_cursor_b, 6);
+        assert_eq!(tracker.counters[6].load(Ordering::Acquire), 1);
+        assert_eq!(tracker.slowest(), 4);
+
+        tracker.remove_receiver(4);
+        assert_eq!(tracker.counters[4].load(Ordering::Acquire), 0);
+        assert_eq!(tracker.slowest(), 6);
+
+        tracker.move_receiver(6, 7);
+        assert_eq!(tracker.counters[6].load(Ordering::Acquire), 0);
+        assert_eq!(tracker.counters[7].load(Ordering::Acquire), 1);
+        assert_eq!(tracker.slowest(), 7);
     }
 
     #[test]
-    fn slowest() {
-        let tracker = BroadcastTracker::default();
-        let _ = tracker.new_receiver(4);
-        let _ = tracker.new_receiver(6);
-        let slowest = tracker.slowest(7);
-        assert_eq!(slowest.0, 4);
-        let _ = tracker.new_receiver(2);
-        let slowest = tracker.slowest(7);
-        assert_eq!(slowest.0, 4);
-        let slowest = tracker.slowest(3);
-        assert_eq!(slowest.0, 2);
-        assert_eq!(tracker.slowest_cache.load(Ordering::Acquire), -1);
-        let slowest = tracker.slowest(0);
-        assert_eq!(slowest.0, 2);
-        assert_eq!(tracker.slowest_cache.load(Ordering::Acquire), 2);
+    fn wait_for_tail() {
+        let tracker = BroadcastTracker::new(10);
+        let shared_cursor_a = tracker.new_receiver();
+        tracker.move_receiver(shared_cursor_a, 4);
+
+        thread::scope(|s| {
+            let th = s.spawn(|| {
+                assert_eq!(tracker.slowest(), 4);
+                tracker.wait_for_tail(9);
+                assert_eq!(tracker.slowest(), 9);
+            });
+            thread::sleep(Duration::from_millis(50));
+            for i in 5..10 {
+                tracker.move_receiver(i - 1, i);
+                thread::sleep(Duration::from_millis(10));
+            }
+            th.join().expect("couldn't join");
+        });
     }
 }

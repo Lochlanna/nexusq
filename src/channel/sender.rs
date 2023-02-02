@@ -3,8 +3,6 @@ use crate::channel::tracker::broadcast_tracker::BroadcastTracker;
 use crate::channel::tracker::Tracker;
 use crate::BroadcastReceiver;
 use async_trait::async_trait;
-use std::io;
-use std::io::Write;
 use std::mem::forget;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -33,35 +31,8 @@ pub trait Sender {
     ///assert_eq!(result, 4);
     /// ```
     fn send(&mut self, value: Self::Item) -> Result<(), SenderError>;
-    /// Send multiple values to the channel in one call. This function should perform better
-    /// than sending them individually.
-    ///
-    /// This function will block until there is enough space in the channel to send all the values
-    /// at once.
-    ///
-    /// # Arguments
-    ///
-    /// * `values`: A list of values to send to the channel.
-    /// The length of this list must be <= the channel buffer size
-    ///
-    /// # Examples
-    ///
-    /// ```
-    ///# use nexusq::{channel, Sender, Receiver};
-    ///let (mut sender, mut receiver) = channel(50);
-    ///let expected: Vec<i32> = (0..12).collect();
-    ///sender.send_batch(expected.clone()).expect("batch send failed");
-    ///let mut result = Vec::with_capacity(12);
-    ///receiver
-    ///    .batch_recv(&mut result)
-    ///    .expect("batch receive failed");
-    ///assert_eq!(result, expected)
-    /// ```
-    fn send_batch(&mut self, values: Vec<Self::Item>) -> Result<(), SenderError>;
     /// Async version of [`Sender::send`]
     async fn async_send(&mut self, value: Self::Item) -> Result<(), SenderError>;
-    /// Async version of [`Sender::send_batch`]
-    async fn async_send_batch(&mut self, values: Vec<Self::Item>) -> Result<(), SenderError>;
 }
 
 #[derive(Debug, Clone)]
@@ -97,16 +68,8 @@ where
     fn send(&mut self, value: Self::Item) -> Result<(), SenderError> {
         self.inner.send(value)
     }
-    fn send_batch(&mut self, values: Vec<Self::Item>) -> Result<(), SenderError> {
-        self.inner.send_batch(values)
-    }
-
     async fn async_send(&mut self, value: Self::Item) -> Result<(), SenderError> {
         self.inner.async_send(value).await
-    }
-
-    async fn async_send_batch(&mut self, values: Vec<Self::Item>) -> Result<(), SenderError> {
-        self.inner.async_send_batch(values).await
     }
 }
 
@@ -119,7 +82,7 @@ impl<T> From<SenderCore<T, BroadcastTracker>> for BroadcastSender<T> {
 #[derive(Debug)]
 pub(crate) struct SenderCore<T, TR> {
     disruptor: Arc<Core<T, TR>>,
-    capacity: isize,
+    capacity: usize,
     cached_slowest_reader: isize,
 }
 
@@ -150,60 +113,45 @@ where
     TR: Tracker,
 {
     //TODO this can probably be cut down / optimised a bit...
-    fn claim(&mut self, num_to_claim: isize) -> Result<isize, SenderError> {
+    fn claim(&mut self, num_to_claim: usize) -> Result<isize, SenderError> {
         if num_to_claim > self.capacity {
             return Err(SenderError::InputTooLarge);
         }
         let claimed = self
             .disruptor
             .claimed
-            .fetch_add(num_to_claim, Ordering::Release);
-        let tail = claimed - self.capacity;
+            .fetch_add(num_to_claim as isize, Ordering::Release);
+        let tail = claimed - self.capacity as isize;
 
-        if tail <= -1 || (self.cached_slowest_reader != -1 && self.cached_slowest_reader > tail) {
+        if tail < 0 || (self.cached_slowest_reader != -1 && self.cached_slowest_reader > tail) {
             return Ok(claimed);
         }
 
-        let mut slowest_reader = self.disruptor.readers.slowest(tail);
-
-        while let Some(slowest_cell) = slowest_reader.1 {
-            if slowest_reader.0 > claimed {
-                break;
-            }
-            slowest_cell.wait_for_completion(tail as usize);
-            slowest_reader = self.disruptor.readers.slowest(tail);
-        }
-        self.cached_slowest_reader = slowest_reader.0;
-        // TODO check if there is another writer writing to a different ID but the same cell.
+        self.cached_slowest_reader =
+            self.disruptor.readers.wait_for_tail(tail as usize + 1) as isize;
 
         Ok(claimed)
     }
 
-    async fn async_claim(&mut self, num_to_claim: isize) -> Result<isize, SenderError> {
+    async fn async_claim(&mut self, num_to_claim: usize) -> Result<isize, SenderError> {
         if num_to_claim > self.capacity {
             return Err(SenderError::InputTooLarge);
         }
         let claimed = self
             .disruptor
             .claimed
-            .fetch_add(num_to_claim, Ordering::Release);
-        let tail = claimed - self.capacity;
+            .fetch_add(num_to_claim as isize, Ordering::Release);
+        let tail = claimed - self.capacity as isize;
 
-        if tail <= -1 || (self.cached_slowest_reader != -1 && self.cached_slowest_reader > tail) {
+        if tail < 0 {
             return Ok(claimed);
         }
 
-        let mut slowest_reader = self.disruptor.readers.slowest(tail);
-
-        while let Some(slowest_cell) = slowest_reader.1 {
-            if slowest_reader.0 > claimed {
-                break;
-            }
-            slowest_cell.async_wait_for_completion(tail as usize).await;
-            slowest_reader = self.disruptor.readers.slowest(tail);
-        }
-        self.cached_slowest_reader = slowest_reader.0;
-        // TODO check if there is another writer writing to a different ID but the same cell.
+        self.cached_slowest_reader = self
+            .disruptor
+            .readers
+            .wait_for_tail_async(tail as usize + 1)
+            .await as isize;
 
         Ok(claimed)
     }
@@ -213,51 +161,7 @@ where
     }
     pub async fn async_send(&mut self, value: T) -> Result<(), SenderError> {
         let claimed_id = self.async_claim(1).await?;
-
-        let index = claimed_id as usize % self.capacity as usize;
-
-        let old_value;
-        unsafe {
-            old_value = std::mem::replace((*self.disruptor.ring).get_unchecked_mut(index), value)
-        }
-
-        // TODO what's the optimisation here
-        // wait for writers to catch up and commit their transactions
-        loop {
-            let check = || {
-                self.disruptor
-                    .committed
-                    .compare_exchange_weak(
-                        claimed_id - 1,
-                        claimed_id,
-                        Ordering::Release,
-                        Ordering::Relaxed,
-                    )
-                    .is_ok()
-            };
-            if check() {
-                break;
-            }
-            let listener = self.disruptor.writer_move.listen();
-            if check() {
-                break;
-            }
-            listener.await;
-            if check() {
-                break;
-            }
-        }
-        // Notify other threads that a value has been written
-        self.disruptor.writer_move.notify(usize::MAX);
-
-        // We do this at the end to ensure that we're not worrying about wierd drop functions or
-        // allocations happening during the critical path
-        if (claimed_id as usize) < self.capacity as usize {
-            forget(old_value);
-        } else {
-            drop(old_value);
-        }
-        Ok(())
+        self.internal_send(value, claimed_id)
     }
 
     #[inline(always)]
@@ -294,76 +198,6 @@ where
         }
         Ok(())
     }
-
-    #[inline(always)]
-    fn internal_send_batch(
-        &mut self,
-        mut data: Vec<T>,
-        start_id: isize,
-    ) -> Result<(), SenderError> {
-        let total_num = data.len() as isize;
-        let start_index = (start_id % self.capacity) as usize;
-        let end_index = start_index + data.len();
-
-        if end_index < self.capacity as usize {
-            unsafe {
-                let target = &mut (*self.disruptor.ring)[start_index..end_index];
-                std::ptr::swap_nonoverlapping(data.as_mut_ptr(), target.as_mut_ptr(), data.len());
-            }
-            if start_id < self.capacity {
-                forget(data.into_boxed_slice());
-            }
-        } else {
-            //TODO surely there's a better way
-            let mut index = start_index;
-            for value in data {
-                if index < self.capacity as usize {
-                    //forget the old value
-                    unsafe {
-                        let old = std::mem::replace(
-                            &mut (*self.disruptor.ring)[index % self.capacity as usize],
-                            value,
-                        );
-                        forget(old);
-                    }
-                } else {
-                    //drop the old value
-                    unsafe {
-                        (*self.disruptor.ring)[index % self.capacity as usize] = value;
-                    }
-                }
-                index += 1;
-            }
-        }
-
-        while self
-            .disruptor
-            .committed
-            .compare_exchange_weak(
-                start_id - 1,
-                start_id + total_num - 1,
-                Ordering::Release,
-                Ordering::Relaxed,
-            )
-            .is_err()
-        {}
-        // Notify other threads that a value has been written
-        self.disruptor.writer_move.notify(usize::MAX);
-
-        Ok(())
-    }
-
-    pub fn send_batch(&mut self, data: Vec<T>) -> Result<(), SenderError> {
-        let start_id = self.claim(data.len() as isize)?;
-
-        self.internal_send_batch(data, start_id)
-    }
-
-    pub async fn async_send_batch(&mut self, data: Vec<T>) -> Result<(), SenderError> {
-        let num_to_claim = data.len() as isize;
-        let start_id = self.async_claim(num_to_claim).await?;
-        self.internal_send_batch(data, start_id)
-    }
 }
 
 #[cfg(test)]
@@ -371,38 +205,6 @@ mod sender_tests {
     use crate::channel::sender::Sender;
     use crate::channel::*;
     use crate::{BroadcastSender, Receiver};
-
-    #[test]
-    fn batch_write() {
-        let (mut sender, mut receiver) = channel(50);
-        let expected: Vec<i32> = (0..12).collect();
-        sender.send_batch(expected).expect("send failed");
-        let mut result = Vec::with_capacity(12);
-        receiver
-            .batch_recv(&mut result)
-            .expect("receiver was okay!");
-
-        let expected: Vec<i32> = (0..12).collect();
-        assert_eq!(result, expected)
-    }
-
-    #[test]
-    fn batch_write_wrapping() {
-        let (mut sender, mut receiver) = channel(10);
-        sender.send(0).expect("couldn't send");
-        sender.send(1).expect("couldn't send");
-        let _ = receiver.recv().expect("couldn't receive");
-        let _ = receiver.recv().expect("couldn't receive");
-        let expected: Vec<i32> = (2..12).collect();
-        sender.send_batch(expected).expect("send failed");
-        let mut result = Vec::with_capacity(12);
-        receiver
-            .batch_recv(&mut result)
-            .expect("receiver was okay!");
-
-        let expected: Vec<i32> = (2..12).collect();
-        assert_eq!(result, expected)
-    }
 
     #[test]
     fn sender_from_receiver() {

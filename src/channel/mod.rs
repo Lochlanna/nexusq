@@ -2,16 +2,17 @@ pub mod receiver;
 pub mod sender;
 pub mod tracker;
 
+use crate::channel::tracker::Tracker;
 use crossbeam_utils::CachePadded;
 use event_listener::Event;
-use std::sync::atomic::{AtomicIsize, AtomicUsize};
+use std::sync::atomic::AtomicIsize;
 use std::sync::Arc;
 use tracker::broadcast_tracker::BroadcastTracker;
 
 #[derive(Debug)]
 pub(crate) struct Core<T, TR> {
     ring: *mut Vec<T>,
-    capacity: isize,
+    capacity: usize,
     claimed: CachePadded<AtomicIsize>,
     committed: CachePadded<AtomicIsize>,
     // is there a better way than events?
@@ -33,7 +34,7 @@ impl<T, TR> Drop for Core<T, TR> {
 
 impl<T, TR> Core<T, TR>
 where
-    TR: Default,
+    TR: Tracker,
 {
     pub(crate) fn new(buffer_size: usize) -> Self {
         let mut ring = Box::new(Vec::with_capacity(buffer_size));
@@ -49,11 +50,11 @@ where
 
         Self {
             ring,
-            capacity: capacity as isize,
+            capacity: capacity,
             claimed: CachePadded::new(AtomicIsize::new(0)),
             committed: CachePadded::new(AtomicIsize::new(-1)),
             writer_move: Default::default(),
-            readers: Default::default(),
+            readers: TR::new(capacity),
         }
     }
 }

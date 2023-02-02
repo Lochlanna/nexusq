@@ -46,6 +46,6 @@ incremental=false
 name = "bench"
 harness = false
 
-[[bench]]
-name = "async_bench"
-harness = false
+#[[bench]]
+#name = "async_bench"
+#harness = false
