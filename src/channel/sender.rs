@@ -120,7 +120,7 @@ where
         let claimed = self
             .disruptor
             .claimed
-            .fetch_add(num_to_claim as isize, Ordering::Release);
+            .fetch_add(num_to_claim as isize, Ordering::SeqCst);
         let tail = claimed - self.capacity as isize;
 
         if tail < 0 || (self.cached_slowest_reader != -1 && self.cached_slowest_reader > tail) {
@@ -140,7 +140,7 @@ where
         let claimed = self
             .disruptor
             .claimed
-            .fetch_add(num_to_claim as isize, Ordering::Release);
+            .fetch_add(num_to_claim as isize, Ordering::SeqCst);
         let tail = claimed - self.capacity as isize;
 
         if tail < 0 {
@@ -166,7 +166,7 @@ where
 
     #[inline(always)]
     fn internal_send(&mut self, value: T, claimed_id: isize) -> Result<(), SenderError> {
-        let index = claimed_id as usize % self.capacity as usize;
+        let index = claimed_id as usize % self.capacity;
 
         let old_value;
         unsafe {
@@ -181,8 +181,8 @@ where
             .compare_exchange_weak(
                 claimed_id - 1,
                 claimed_id,
-                Ordering::Release,
-                Ordering::Relaxed,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
             )
             .is_err()
         {}
@@ -191,7 +191,7 @@ where
 
         // We do this at the end to ensure that we're not worrying about wierd drop functions or
         // allocations happening during the critical path
-        if (claimed_id as usize) < self.capacity as usize {
+        if (claimed_id as usize) < self.capacity {
             forget(old_value);
         } else {
             drop(old_value);

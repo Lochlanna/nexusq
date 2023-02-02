@@ -11,9 +11,6 @@ pub enum ReaderError {
     /// There is nothing new to be read from the channel
     #[error("there is no unread data on the channel")]
     NoNewData,
-    /// The given destination vector is already full
-    #[error("the destination for reads doesn't have remaining capacity")]
-    DestinationFull,
 }
 
 #[async_trait]
@@ -78,11 +75,11 @@ where
     ///assert_eq!(result, 4);
     /// ```
     fn recv(&mut self) -> Result<Self::Item, ReaderError> {
-        self.inner.recv()
+        Ok(self.inner.recv())
     }
     /// Async version of [`BroadcastReceiver::recv`]
     async fn async_recv(&mut self) -> Result<Self::Item, ReaderError> {
-        self.inner.async_recv().await
+        Ok(self.inner.async_recv().await)
     }
 }
 
@@ -98,9 +95,7 @@ where
     TR: Tracker,
 {
     fn drop(&mut self) {
-        self.disruptor
-            .readers
-            .remove_receiver(self.internal_cursor as usize);
+        self.disruptor.readers.remove_receiver(self.internal_cursor);
     }
 }
 
@@ -128,7 +123,7 @@ where
         let tail = self.disruptor.readers.new_receiver();
         self.disruptor
             .readers
-            .move_receiver(tail, self.internal_cursor as usize);
+            .move_receiver(tail, self.internal_cursor);
         Self {
             disruptor: self.disruptor.clone(),
             internal_cursor: self.internal_cursor,
@@ -144,10 +139,9 @@ where
     #[inline(always)]
     fn increment_cursor(&mut self) {
         self.internal_cursor += 1;
-        self.disruptor.readers.move_receiver(
-            (self.internal_cursor - 1) as usize,
-            self.internal_cursor as usize,
-        );
+        self.disruptor
+            .readers
+            .move_receiver(self.internal_cursor - 1, self.internal_cursor)
     }
 }
 
@@ -169,11 +163,10 @@ where
     /// Try to read the next value from the channel. This function will not block and will return
     /// a [`ReaderError::NoNewData`] if there is no data available
     fn try_read_next(&mut self) -> Result<T, ReaderError> {
-        let committed = self.disruptor.committed.load(Ordering::Acquire);
-        if self.internal_cursor > committed as usize {
+        if self.internal_cursor > self.disruptor.committed.load(Ordering::SeqCst) as usize {
             return Err(ReaderError::NoNewData);
         }
-        let index = self.internal_cursor as usize % self.disruptor.capacity as usize;
+        let index = self.internal_cursor % self.capacity;
         // the value has been committed so it's safe to read it!
         let value;
         unsafe {
@@ -185,29 +178,16 @@ where
 
     /// Read the next value from the channel. This function will block and wait for data to
     /// become available.
-    pub fn recv(&mut self) -> Result<T, ReaderError> {
+    pub fn recv(&mut self) -> T {
         loop {
             // try again as the listener can take some time to be registered and cause us to miss things
-            let immediate = self.try_read_next();
-            match &immediate {
-                Ok(_) => return immediate,
-                Err(err) => {
-                    if !matches!(err, ReaderError::NoNewData) {
-                        return immediate;
-                    }
-                }
-            };
+            if let Ok(message) = self.try_read_next() {
+                return message;
+            }
             let listener = self.disruptor.writer_move.listen();
-
-            let immediate = self.try_read_next();
-            match &immediate {
-                Ok(_) => return immediate,
-                Err(err) => {
-                    if !matches!(err, ReaderError::NoNewData) {
-                        return immediate;
-                    }
-                }
-            };
+            if let Ok(message) = self.try_read_next() {
+                return message;
+            }
             listener.wait();
         }
     }
@@ -219,40 +199,17 @@ where
     TR: Tracker,
 {
     /// Async version of [`ReceiverCore::recv`]
-    pub async fn async_recv(&mut self) -> Result<T, ReaderError> {
-        let immediate = self.try_read_next();
-        match &immediate {
-            Ok(_) => return immediate,
-            Err(err) => {
-                if !matches!(err, ReaderError::NoNewData) {
-                    return immediate;
-                }
-            }
-        };
-
+    pub async fn async_recv(&mut self) -> T {
         loop {
-            let listener = self.disruptor.writer_move.listen();
             // try again as the listener can take some time to be registered and cause us to miss things
-            let immediate = self.try_read_next();
-            match &immediate {
-                Ok(_) => return immediate,
-                Err(err) => {
-                    if !matches!(err, ReaderError::NoNewData) {
-                        return immediate;
-                    }
-                }
-            };
-            listener.await;
-
-            let immediate = self.try_read_next();
-            match &immediate {
-                Ok(_) => return immediate,
-                Err(err) => {
-                    if !matches!(err, ReaderError::NoNewData) {
-                        return immediate;
-                    }
-                }
-            };
+            if let Ok(message) = self.try_read_next() {
+                return message;
+            }
+            let listener = self.disruptor.writer_move.listen();
+            if let Ok(message) = self.try_read_next() {
+                return message;
+            }
+            listener.await
         }
     }
 }

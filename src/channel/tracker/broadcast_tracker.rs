@@ -22,6 +22,7 @@ impl BroadcastTracker {
     }
 
     fn chase_tail(&self, from: usize) {
+        todo!();
         let mut id = from;
         loop {
             //TODO maybe there is an optimisation here...
@@ -29,11 +30,11 @@ impl BroadcastTracker {
             unsafe {
                 cell = self.counters.get_unchecked(id % self.counters.len());
             }
-            if cell.load(Ordering::Acquire) > 0 {
+            if cell.load(Ordering::SeqCst) > 0 {
                 if cell.fetch_add(1, Ordering::SeqCst) > 0 {
-                    self.tail.store(id, Ordering::Release);
+                    self.tail.store(id, Ordering::SeqCst);
                     if cell.fetch_sub(1, Ordering::SeqCst) > 1 {
-                        // the reader was still on this cell we have successfully se the tail
+                        // the reader was still on this cell we have successfully set the tail
                         break;
                     }
                     //keep looping
@@ -63,7 +64,7 @@ impl Tracker for BroadcastTracker {
 
     fn new_receiver(&self) -> usize {
         self.num_receivers.fetch_add(1, Ordering::SeqCst);
-        let tail_pos = self.tail.load(Ordering::Acquire);
+        let tail_pos = self.tail.load(Ordering::SeqCst);
         let index = tail_pos % self.counters.len();
         //TODO there is a race condition here!
         unsafe {
@@ -75,6 +76,10 @@ impl Tracker for BroadcastTracker {
     }
 
     fn move_receiver(&self, from: usize, to: usize) {
+        if to == from {
+            return;
+        }
+        debug_assert!(to > from || to - from == 1);
         let from_idx = from % self.counters.len();
         let to_idx = to % self.counters.len();
         let previous;
@@ -87,11 +92,12 @@ impl Tracker for BroadcastTracker {
                 .get_unchecked(to_idx)
                 .fetch_add(1, Ordering::SeqCst);
         }
-        debug_assert!(previous > 0);
-        if previous == 1 && from == self.tail.load(Ordering::Acquire) {
-            if to == from + 1 {
+        debug_assert!(previous > 0 && previous <= 2);
+        //Assume there is at least one receiver so don't need to check here
+        if previous == 1 && from == self.tail.load(Ordering::SeqCst) {
+            if to - from == 1 {
                 //we know we are the tail so just set and go!
-                self.tail.store(to, Ordering::Release);
+                self.tail.store(to, Ordering::SeqCst);
                 self.tail_move.notify(usize::MAX);
                 return;
             }
@@ -113,25 +119,25 @@ impl Tracker for BroadcastTracker {
         let num_left = self.num_receivers.fetch_sub(1, Ordering::SeqCst) - 1;
         //TODO what to do with the tail when we go to zero...??? currently will lock the sender forever!!
         // We could return error on slowest to notify sender of this
-        if previous == 1 && at == self.tail.load(Ordering::Acquire) && num_left > 0 {
+        if previous == 1 && at == self.tail.load(Ordering::SeqCst) && num_left > 0 {
             // we have just removed the tail receiver so we need to chase the tail to find it
             self.chase_tail(at);
         }
     }
 
     fn slowest(&self) -> usize {
-        self.tail.load(Ordering::Acquire)
+        self.tail.load(Ordering::SeqCst)
     }
 
     fn wait_for_tail(&self, expected_tail: usize) -> usize {
         loop {
-            let mut tail = self.tail.load(Ordering::Acquire);
+            let mut tail = self.tail.load(Ordering::SeqCst);
             if tail >= expected_tail {
                 return tail;
             }
             let listener = self.tail_move.listen();
-            tail = self.tail.load(Ordering::Acquire);
-            if self.tail.load(Ordering::Acquire) >= expected_tail {
+            tail = self.tail.load(Ordering::SeqCst);
+            if self.tail.load(Ordering::SeqCst) >= expected_tail {
                 return tail;
             }
             listener.wait()
@@ -140,13 +146,13 @@ impl Tracker for BroadcastTracker {
 
     async fn wait_for_tail_async(&self, expected_tail: usize) -> usize {
         loop {
-            let mut tail = self.tail.load(Ordering::Acquire);
+            let mut tail = self.tail.load(Ordering::SeqCst);
             if tail >= expected_tail {
                 return tail;
             }
             let listener = self.tail_move.listen();
-            tail = self.tail.load(Ordering::Acquire);
-            if self.tail.load(Ordering::Acquire) >= expected_tail {
+            tail = self.tail.load(Ordering::SeqCst);
+            if self.tail.load(Ordering::SeqCst) >= expected_tail {
                 return tail;
             }
             listener.await
@@ -164,24 +170,24 @@ mod tracker_tests {
     fn add_remove_receiver() {
         let tracker = BroadcastTracker::new(10);
         let shared_cursor_a = tracker.new_receiver();
-        assert_eq!(tracker.counters[0].load(Ordering::Acquire), 1);
+        assert_eq!(tracker.counters[0].load(Ordering::SeqCst), 1);
         tracker.move_receiver(shared_cursor_a, 4);
-        assert_eq!(tracker.counters[0].load(Ordering::Acquire), 0);
-        assert_eq!(tracker.counters[4].load(Ordering::Acquire), 1);
+        assert_eq!(tracker.counters[0].load(Ordering::SeqCst), 0);
+        assert_eq!(tracker.counters[4].load(Ordering::SeqCst), 1);
         assert_eq!(tracker.slowest(), 4);
 
         let shared_cursor_b = tracker.new_receiver();
         tracker.move_receiver(shared_cursor_b, 6);
-        assert_eq!(tracker.counters[6].load(Ordering::Acquire), 1);
+        assert_eq!(tracker.counters[6].load(Ordering::SeqCst), 1);
         assert_eq!(tracker.slowest(), 4);
 
         tracker.remove_receiver(4);
-        assert_eq!(tracker.counters[4].load(Ordering::Acquire), 0);
+        assert_eq!(tracker.counters[4].load(Ordering::SeqCst), 0);
         assert_eq!(tracker.slowest(), 6);
 
         tracker.move_receiver(6, 7);
-        assert_eq!(tracker.counters[6].load(Ordering::Acquire), 0);
-        assert_eq!(tracker.counters[7].load(Ordering::Acquire), 1);
+        assert_eq!(tracker.counters[6].load(Ordering::SeqCst), 0);
+        assert_eq!(tracker.counters[7].load(Ordering::SeqCst), 1);
         assert_eq!(tracker.slowest(), 7);
     }
 

@@ -51,7 +51,7 @@ where
 
 #[inline(always)]
 fn read_n(mut receiver: impl TestReceiver + 'static, num_to_read: usize) {
-    for _ in 0..num_to_read {
+    for i in 0..num_to_read {
         let _ = receiver.test_recv();
     }
 }
@@ -74,7 +74,7 @@ fn nexus(
 ) -> Duration {
     let mut total_duration = Duration::new(0, 0);
     for _ in 0..iters {
-        let (sender, receiver) = crate::channel(100);
+        let (sender, receiver) = crate::channel(5);
         let mut receivers: Vec<_> = (0..readers - 1).map(|_| receiver.another()).collect();
         let mut senders: Vec<_> = (0..writers - 1).map(|_| sender.another()).collect();
         receivers.push(receiver);
@@ -98,8 +98,8 @@ fn nexus(
 fn test_bench() {
     let num = 10000;
     let writers = 1;
-    let readers = 1;
-    let iterations = 100;
+    let readers = 2;
+    let iterations = 1;
 
     let pool = Pool::<ThunkWorker<()>>::new(writers + readers);
     let (tx, mut rx) = std::sync::mpsc::channel();
