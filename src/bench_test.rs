@@ -1,6 +1,10 @@
 use std::time::{Duration, Instant};
 
 use crate::{Receiver, Sender};
+use std::fmt::{Display, Formatter};
+use std::io::Write;
+use std::sync::mpsc::TrySendError;
+
 use workerpool::thunk::{Thunk, ThunkWorker};
 use workerpool::Pool;
 
@@ -51,7 +55,7 @@ where
 
 #[inline(always)]
 fn read_n(mut receiver: impl TestReceiver + 'static, num_to_read: usize) {
-    for i in 0..num_to_read {
+    for _ in 0..num_to_read {
         let _ = receiver.test_recv();
     }
 }
@@ -79,6 +83,7 @@ fn nexus(
         let mut senders: Vec<_> = (0..writers - 1).map(|_| sender.another()).collect();
         receivers.push(receiver);
         senders.push(sender);
+
         let start = Instant::now();
         for r in receivers {
             pool.execute_to(tx.clone(), Thunk::of(move || read_n(r, num * writers)))
@@ -96,18 +101,18 @@ fn nexus(
 
 #[test]
 fn test_bench() {
-    let num = 100000;
+    let num = 10000;
     let writers = 1;
-    let readers = 2;
-    let iterations = 1000;
+    // let readers = 2;
+    let iterations = 10000;
 
-    let pool = Pool::<ThunkWorker<()>>::new(writers + readers);
+    let pool = Pool::<ThunkWorker<()>>::new(6);
     let (tx, mut rx) = std::sync::mpsc::channel();
-
-    let start = Instant::now();
-    nexus(num, writers, readers, &pool, &tx, &mut rx, iterations);
-    let elapsed = start.elapsed();
-    let giga_throughput =
-        (num * writers * iterations as usize) as f64 / elapsed.as_secs_f64() / 1000000_f64;
-    println!("throughput is {} million/second", giga_throughput);
+    for readers in 1..=4 {
+        let duration = nexus(num, writers, readers, &pool, &tx, &mut rx, iterations);
+        let throughput =
+            (num * writers * iterations as usize) as f64 / duration.as_secs_f64() / 1000000_f64;
+        println!("{readers} throughput is {} million/second", throughput);
+        std::io::stdout().flush();
+    }
 }

@@ -253,66 +253,62 @@ impl Display for RunParam {
 }
 
 fn throughput(c: &mut Criterion) {
-    let num = 10000;
+    let num_elements = 10000;
     let max_writers = 4;
-    let max_readers = 3;
+    let max_readers = 4;
 
     let pool = Pool::<ThunkWorker<()>>::new(max_writers + max_readers);
     let (tx, mut rx) = std::sync::mpsc::channel();
 
-    let mut group = c.benchmark_group("nexus");
-    for readers in 1..max_readers {
-        for writers in 1..max_writers {
-            let input = (writers, readers);
-            group.throughput(Throughput::Elements(num as u64 * writers as u64));
-            group.bench_with_input(
-                BenchmarkId::from_parameter(RunParam(input)),
-                &input,
-                |b, &input| {
-                    b.iter_custom(|iters| {
-                        black_box(nexus(num, input.0, input.1, &pool, &tx, &mut rx, iters))
-                    });
-                },
-            );
+    for num_writers in 1..=max_writers {
+        for num_readers in 1..=max_readers {
+            let mut group = c.benchmark_group(format!("{num_writers}w, {num_readers}r"));
+            let input = (num_writers, num_readers);
+            group.throughput(Throughput::Elements(
+                num_elements as u64 * num_writers as u64,
+            ));
+            group.bench_with_input("nexus", &input, |b, &input| {
+                b.iter_custom(|iters| {
+                    black_box(nexus(
+                        num_elements,
+                        input.0,
+                        input.1,
+                        &pool,
+                        &tx,
+                        &mut rx,
+                        iters,
+                    ))
+                });
+            });
+            group.bench_with_input("multiq", &input, |b, &input| {
+                b.iter_custom(|iters| {
+                    black_box(multiq(
+                        num_elements,
+                        input.0,
+                        input.1,
+                        &pool,
+                        &tx,
+                        &mut rx,
+                        iters,
+                    ))
+                });
+            });
+            group.bench_with_input("multiq2", &input, |b, &input| {
+                b.iter_custom(|iters| {
+                    black_box(multiq2(
+                        num_elements,
+                        input.0,
+                        input.1,
+                        &pool,
+                        &tx,
+                        &mut rx,
+                        iters,
+                    ))
+                });
+            });
+            group.finish();
         }
     }
-    group.finish();
-
-    let mut group = c.benchmark_group("multiq");
-    for readers in 1..max_readers {
-        for writers in 1..max_writers {
-            let input = (writers, readers);
-            group.throughput(Throughput::Elements(num as u64 * writers as u64));
-            group.bench_with_input(
-                BenchmarkId::from_parameter(RunParam(input)),
-                &input,
-                |b, &input| {
-                    b.iter_custom(|iters| {
-                        black_box(multiq(num, input.0, input.1, &pool, &tx, &mut rx, iters))
-                    });
-                },
-            );
-        }
-    }
-    group.finish();
-
-    let mut group = c.benchmark_group("multiq2");
-    for readers in 1..max_readers {
-        for writers in 1..max_writers {
-            let input = (writers, readers);
-            group.throughput(Throughput::Elements(num as u64 * writers as u64));
-            group.bench_with_input(
-                BenchmarkId::from_parameter(RunParam(input)),
-                &input,
-                |b, &input| {
-                    b.iter_custom(|iters| {
-                        black_box(multiq2(num, input.0, input.1, &pool, &tx, &mut rx, iters))
-                    });
-                },
-            );
-        }
-    }
-    group.finish();
 }
 criterion_group!(benches, throughput);
 criterion_main!(benches);

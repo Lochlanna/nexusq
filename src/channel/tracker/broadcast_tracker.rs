@@ -99,6 +99,7 @@ impl Tracker for BroadcastTracker {
                 self.tail.store(to, Ordering::Release);
                 self.tail_move.notify(usize::MAX);
             } else {
+                panic!("can't chase tail yet!");
                 self.chase_tail(from);
             }
         }
@@ -119,7 +120,7 @@ impl Tracker for BroadcastTracker {
         // We could return error on slowest to notify sender of this
         if previous == 1 && at == self.tail.load(Ordering::SeqCst) && num_left > 0 {
             // we have just removed the tail receiver so we need to chase the tail to find it
-            self.chase_tail(at);
+            // self.chase_tail(at);
         }
     }
 
