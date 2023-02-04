@@ -127,7 +127,8 @@ where
             return Ok(claimed);
         }
 
-        self.cached_slowest_reader = self.disruptor.readers.wait_for_tail(tail as usize) as isize;
+        self.cached_slowest_reader =
+            self.disruptor.readers.wait_for_tail(tail as usize + 1) as isize;
 
         Ok(claimed)
     }
@@ -181,7 +182,7 @@ where
                 claimed_id - 1,
                 claimed_id,
                 Ordering::SeqCst,
-                Ordering::SeqCst,
+                Ordering::Acquire,
             )
             .is_err()
         {}

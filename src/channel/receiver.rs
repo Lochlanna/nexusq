@@ -163,7 +163,7 @@ where
     /// Try to read the next value from the channel. This function will not block and will return
     /// a [`ReaderError::NoNewData`] if there is no data available
     fn try_read_next(&mut self) -> Result<T, ReaderError> {
-        let committed = self.disruptor.committed.load(Ordering::SeqCst);
+        let committed = self.disruptor.committed.load(Ordering::Acquire);
         if committed < 0 || self.internal_cursor > committed as usize {
             return Err(ReaderError::NoNewData);
         }
