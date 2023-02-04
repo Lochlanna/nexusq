@@ -123,7 +123,7 @@ where
             .fetch_add(num_to_claim as isize, Ordering::SeqCst);
         let tail = claimed - self.capacity as isize;
 
-        if tail < 0 || (self.cached_slowest_reader != -1 && self.cached_slowest_reader > tail) {
+        if tail < 0 || self.cached_slowest_reader > tail {
             return Ok(claimed);
         }
 
@@ -143,7 +143,7 @@ where
             .fetch_add(num_to_claim as isize, Ordering::SeqCst);
         let tail = claimed - self.capacity as isize;
 
-        if tail < 0 {
+        if tail < 0 || self.cached_slowest_reader > tail {
             return Ok(claimed);
         }
 

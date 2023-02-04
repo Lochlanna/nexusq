@@ -31,9 +31,9 @@ impl BroadcastTracker {
             unsafe {
                 cell = self.counters.get_unchecked(id % self.counters.len());
             }
-            if cell.load(Ordering::SeqCst) > 0 {
+            if cell.load(Ordering::Acquire) > 0 {
                 if cell.fetch_add(1, Ordering::SeqCst) > 0 {
-                    self.tail.store(id, Ordering::SeqCst);
+                    self.tail.store(id, Ordering::Release);
                     if cell.fetch_sub(1, Ordering::SeqCst) > 1 {
                         // the reader was still on this cell we have successfully set the tail
                         break;
@@ -70,7 +70,7 @@ impl Tracker for BroadcastTracker {
 
     fn new_receiver(&self) -> usize {
         self.num_receivers.fetch_add(1, Ordering::SeqCst);
-        let tail_pos = self.tail.load(Ordering::SeqCst);
+        let tail_pos = self.tail.load(Ordering::Acquire);
         let index = tail_pos % self.counters.len();
         //TODO there is a race condition here!
         unsafe {
@@ -118,25 +118,25 @@ impl Tracker for BroadcastTracker {
         let num_left = self.num_receivers.fetch_sub(1, Ordering::SeqCst) - 1;
         //TODO what to do with the tail when we go to zero...??? currently will lock the sender forever!!
         // We could return error on slowest to notify sender of this
-        if previous == 1 && at == self.tail.load(Ordering::SeqCst) && num_left > 0 {
+        if previous == 1 && at == self.tail.load(Ordering::Acquire) && num_left > 0 {
             // we have just removed the tail receiver so we need to chase the tail to find it
             // self.chase_tail(at);
         }
     }
 
     fn slowest(&self) -> usize {
-        self.tail.load(Ordering::SeqCst)
+        self.tail.load(Ordering::Acquire)
     }
 
     fn wait_for_tail(&self, expected_tail: usize) -> usize {
         loop {
-            let mut tail = self.tail.load(Ordering::SeqCst);
+            let mut tail = self.tail.load(Ordering::Acquire);
             if tail >= expected_tail {
                 return tail;
             }
             let listener = self.tail_move.listen();
-            tail = self.tail.load(Ordering::SeqCst);
-            if self.tail.load(Ordering::SeqCst) >= expected_tail {
+            tail = self.tail.load(Ordering::Acquire);
+            if tail >= expected_tail {
                 return tail;
             }
             listener.wait()
@@ -145,13 +145,13 @@ impl Tracker for BroadcastTracker {
 
     async fn wait_for_tail_async(&self, expected_tail: usize) -> usize {
         loop {
-            let mut tail = self.tail.load(Ordering::SeqCst);
+            let mut tail = self.tail.load(Ordering::Acquire);
             if tail >= expected_tail {
                 return tail;
             }
             let listener = self.tail_move.listen();
-            tail = self.tail.load(Ordering::SeqCst);
-            if self.tail.load(Ordering::SeqCst) >= expected_tail {
+            tail = self.tail.load(Ordering::Acquire);
+            if tail >= expected_tail {
                 return tail;
             }
             listener.await

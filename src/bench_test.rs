@@ -101,14 +101,14 @@ fn nexus(
 
 #[test]
 fn test_bench() {
-    let num = 10000;
-    let writers = 1;
-    // let readers = 2;
-    let iterations = 10000;
+    let num = 80000;
+    let writers = 2;
+    let readers = 2;
+    let iterations = 100;
 
-    let pool = Pool::<ThunkWorker<()>>::new(6);
+    let pool = Pool::<ThunkWorker<()>>::new(writers + readers);
     let (tx, mut rx) = std::sync::mpsc::channel();
-    for readers in 1..=4 {
+    for readers in 1..=1 {
         let duration = nexus(num, writers, readers, &pool, &tx, &mut rx, iterations);
         let throughput =
             (num * writers * iterations as usize) as f64 / duration.as_secs_f64() / 1000000_f64;
