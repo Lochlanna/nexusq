@@ -1,5 +1,6 @@
 pub mod broadcast_tracker;
 
+use alloc::boxed::Box;
 use async_trait::async_trait;
 
 #[async_trait]

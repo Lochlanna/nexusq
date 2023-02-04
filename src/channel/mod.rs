@@ -3,10 +3,12 @@ pub mod sender;
 pub mod tracker;
 
 use crate::channel::tracker::Tracker;
+use alloc::boxed::Box;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::sync::atomic::AtomicIsize;
 use crossbeam_utils::CachePadded;
 use event_listener::Event;
-use std::sync::atomic::AtomicIsize;
-use std::sync::Arc;
 use tracker::broadcast_tracker::BroadcastTracker;
 
 #[derive(Debug)]
@@ -74,6 +76,7 @@ mod tests {
     use super::*;
     use crate::channel::sender::Sender;
     use crate::Receiver;
+    use std::prelude::v1::String;
     use std::thread::{spawn, JoinHandle};
 
     #[inline(always)]
@@ -206,7 +209,7 @@ mod tests {
     fn single_writer_single_reader_clone() {
         let (mut sender, mut receiver) = channel(10);
         sender
-            .send("hello world".to_string())
+            .send(String::from("hello world"))
             .expect("couldn't send");
         let res = receiver.recv().expect("couldn't read");
         assert_eq!(res, "hello world");
@@ -216,7 +219,7 @@ mod tests {
     async fn async_single_writer_single_reader_clone() {
         let (mut sender, mut receiver) = channel(10);
         sender
-            .async_send("hello world".to_string())
+            .async_send(String::from("hello world"))
             .await
             .expect("couldn't send");
         let res = receiver.async_recv().await.expect("couldn't read");

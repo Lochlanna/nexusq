@@ -2,16 +2,14 @@ use super::*;
 use crate::channel::tracker::broadcast_tracker::BroadcastTracker;
 use crate::channel::tracker::Tracker;
 use crate::BroadcastReceiver;
+use alloc::sync::Arc;
 use async_trait::async_trait;
-use std::mem::forget;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
-use thiserror::Error;
+use core::mem::forget;
+use core::sync::atomic::Ordering;
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum SenderError {
     /// The given input is too large to fit in the buffered channel
-    #[error("buffer not big enough to accept input")]
     InputTooLarge,
 }
 
@@ -170,7 +168,7 @@ where
 
         let old_value;
         unsafe {
-            old_value = std::mem::replace((*self.disruptor.ring).get_unchecked_mut(index), value)
+            old_value = core::mem::replace((*self.disruptor.ring).get_unchecked_mut(index), value)
         }
 
         // TODO what's the optimisation here

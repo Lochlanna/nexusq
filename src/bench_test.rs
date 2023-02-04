@@ -1,10 +1,9 @@
 use std::time::{Duration, Instant};
 
 use crate::{Receiver, Sender};
-use std::fmt::{Display, Formatter};
 use std::io::Write;
-use std::sync::mpsc::TrySendError;
-
+use std::println;
+use std::vec::Vec;
 use workerpool::thunk::{Thunk, ThunkWorker};
 use workerpool::Pool;
 
@@ -113,6 +112,6 @@ fn test_bench() {
         let throughput =
             (num * writers * iterations as usize) as f64 / duration.as_secs_f64() / 1000000_f64;
         println!("{readers} throughput is {} million/second", throughput);
-        std::io::stdout().flush();
+        let _ = std::io::stdout().flush();
     }
 }

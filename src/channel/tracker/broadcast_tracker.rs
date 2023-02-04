@@ -1,8 +1,8 @@
 use super::Tracker;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use async_trait::async_trait;
-use std::io::Write;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::thread;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug)]
 pub struct BroadcastTracker {
@@ -58,7 +58,7 @@ impl BroadcastTracker {
 impl Tracker for BroadcastTracker {
     fn new(mut size: usize) -> Self {
         size += 1;
-        let mut counters = vec![];
+        let mut counters = Vec::new();
         counters.resize_with(size, Default::default);
         Self {
             counters,

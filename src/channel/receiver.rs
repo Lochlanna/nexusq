@@ -1,15 +1,13 @@
 use super::*;
 use crate::channel::tracker::Tracker;
 use crate::BroadcastSender;
+use alloc::sync::Arc;
 use async_trait::async_trait;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
-use thiserror::Error;
+use core::sync::atomic::Ordering;
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum ReaderError {
     /// There is nothing new to be read from the channel
-    #[error("there is no unread data on the channel")]
     NoNewData,
 }
 

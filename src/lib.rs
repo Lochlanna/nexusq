@@ -1,5 +1,11 @@
 #![allow(dead_code)]
 #![doc = include_str!("../README.md")]
+#![no_std]
+
+#[cfg(test)]
+extern crate std;
+
+extern crate alloc;
 
 #[cfg(test)]
 mod bench_test;
