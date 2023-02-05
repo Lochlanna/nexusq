@@ -10,6 +10,7 @@ extern crate alloc;
 #[cfg(test)]
 mod bench_test;
 mod channel;
+mod event;
 
 pub use channel::{
     channel,

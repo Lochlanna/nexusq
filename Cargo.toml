@@ -26,6 +26,7 @@ multiqueue = "0.3.2"
 multiqueue2 = "0.1.7"
 workerpool = "1.2.0"
 futures = "0.3.25"
+console-subscriber = "0.1.8"
 
 [profile.release]
 lto=true

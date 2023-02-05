@@ -3,6 +3,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use async_trait::async_trait;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
 
 #[derive(Debug)]
 pub struct BroadcastTracker {
@@ -49,8 +50,20 @@ impl BroadcastTracker {
         self.tail_move.notify(usize::MAX);
     }
 
-    fn at(&self, index: usize) -> &AtomicUsize {
-        unsafe { self.counters.get_unchecked(index) }
+    fn wait_for_shared(
+        &self,
+        expected_tail: usize,
+    ) -> Result<usize, event_listener::EventListener> {
+        let mut tail = self.tail.load(Ordering::Acquire);
+        if tail >= expected_tail {
+            return Ok(tail);
+        }
+        let listener = self.tail_move.listen();
+        tail = self.tail.load(Ordering::Acquire);
+        if tail >= expected_tail {
+            return Ok(tail);
+        }
+        Err(listener)
     }
 }
 
@@ -87,21 +100,25 @@ impl Tracker for BroadcastTracker {
         }
         let from_idx = from % self.counters.len();
         let to_idx = to % self.counters.len();
-        let to_cell = self.at(to_idx);
-        let from_cell = self.at(from_idx);
+        let to_cell;
+        let from_cell;
+
+        unsafe {
+            to_cell = self.counters.get_unchecked(to_idx);
+            from_cell = self.counters.get_unchecked(from_idx);
+        }
 
         to_cell.fetch_add(1, Ordering::SeqCst);
         let previous = from_cell.fetch_sub(1, Ordering::SeqCst);
 
         //Assume there is at least one receiver so don't need to check here
-        if previous == 1 && self.tail.load(Ordering::Acquire) == from {
-            if to - from == 1 {
-                self.tail.store(to, Ordering::Release);
-                self.tail_move.notify(usize::MAX);
-            } else {
-                panic!("can't chase tail yet!");
-                self.chase_tail(from);
-            }
+        if previous == 1
+            && self
+                .tail
+                .compare_exchange(from, to, Ordering::SeqCst, Ordering::Acquire)
+                .is_ok()
+        {
+            self.tail_move.notify(usize::MAX);
         }
     }
 
@@ -130,31 +147,19 @@ impl Tracker for BroadcastTracker {
 
     fn wait_for_tail(&self, expected_tail: usize) -> usize {
         loop {
-            let mut tail = self.tail.load(Ordering::Acquire);
-            if tail >= expected_tail {
-                return tail;
+            match self.wait_for_shared(expected_tail) {
+                Ok(tail) => return tail,
+                Err(listener) => listener.wait(),
             }
-            let listener = self.tail_move.listen();
-            tail = self.tail.load(Ordering::Acquire);
-            if tail >= expected_tail {
-                return tail;
-            }
-            listener.wait()
         }
     }
 
     async fn wait_for_tail_async(&self, expected_tail: usize) -> usize {
         loop {
-            let mut tail = self.tail.load(Ordering::Acquire);
-            if tail >= expected_tail {
-                return tail;
+            match self.wait_for_shared(expected_tail) {
+                Ok(tail) => return tail,
+                Err(listener) => listener.await,
             }
-            let listener = self.tail_move.listen();
-            tail = self.tail.load(Ordering::Acquire);
-            if tail >= expected_tail {
-                return tail;
-            }
-            listener.await
         }
     }
 }

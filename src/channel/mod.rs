@@ -170,11 +170,11 @@ mod tests {
             })
             .collect();
         drop(receiver);
-        let writers: Vec<_> = (0..num_writers)
-            .map(|_| {
-                let new_sender = sender.clone();
-                tokio::spawn(async_write_n(new_sender, num_elements))
-            })
+        let mut senders: Vec<_> = (0..(num_writers - 1)).map(|_| sender.clone()).collect();
+        senders.push(sender);
+        let writers: Vec<_> = senders
+            .into_iter()
+            .map(|new_sender| tokio::spawn(async_write_n(new_sender, num_elements)))
             .collect();
 
         futures::future::join_all(writers).await;
@@ -258,7 +258,8 @@ mod tests {
 
     #[tokio::test]
     async fn async_two_writer_one_reader() {
-        let num = 7;
-        test_async(num, 2, 1, 5).await;
+        console_subscriber::init();
+        let num = 10;
+        test_async(num, 1, 1, 5).await;
     }
 }

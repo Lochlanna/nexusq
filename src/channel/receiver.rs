@@ -4,6 +4,7 @@ use crate::BroadcastSender;
 use alloc::sync::Arc;
 use async_trait::async_trait;
 use core::sync::atomic::Ordering;
+use std::thread;
 
 #[derive(Debug)]
 pub enum ReaderError {
@@ -86,6 +87,7 @@ pub(crate) struct ReceiverCore<T, TR: Tracker> {
     disruptor: Arc<Core<T, TR>>,
     internal_cursor: usize,
     capacity: usize,
+    committed_cache: isize,
 }
 
 impl<T, TR> Drop for ReceiverCore<T, TR>
@@ -108,6 +110,7 @@ where
             disruptor,
             internal_cursor,
             capacity,
+            committed_cache: -1,
         }
     }
 }
@@ -126,6 +129,7 @@ where
             disruptor: self.disruptor.clone(),
             internal_cursor: self.internal_cursor,
             capacity: self.capacity,
+            committed_cache: self.committed_cache,
         }
     }
 }
@@ -141,12 +145,6 @@ where
             .readers
             .move_receiver(self.internal_cursor - 1, self.internal_cursor)
     }
-}
-
-impl<T, TR> ReceiverCore<T, TR>
-where
-    TR: Tracker,
-{
     /// Creates a new receiver at the most recent entry in the stream
     pub fn add_stream(&self) -> Self {
         self.disruptor.clone().into()
@@ -161,8 +159,13 @@ where
     /// Try to read the next value from the channel. This function will not block and will return
     /// a [`ReaderError::NoNewData`] if there is no data available
     fn try_read_next(&mut self) -> Result<T, ReaderError> {
-        let committed = self.disruptor.committed.load(Ordering::Acquire);
-        if committed < 0 || self.internal_cursor > committed as usize {
+        if self.internal_cursor as isize > self.committed_cache {
+            self.committed_cache = self.disruptor.committed.load(Ordering::Acquire);
+            if self.internal_cursor as isize > self.committed_cache {
+                return Err(ReaderError::NoNewData);
+            }
+        }
+        if self.committed_cache < 0 {
             return Err(ReaderError::NoNewData);
         }
         let index = self.internal_cursor % self.capacity;
@@ -175,19 +178,27 @@ where
         Ok(value)
     }
 
+    fn shared_recv(&mut self) -> Result<T, event_listener::EventListener> {
+        if let Ok(message) = self.try_read_next() {
+            return Ok(message);
+        }
+        let listener = self.disruptor.writer_move.listen();
+        if let Ok(message) = self.try_read_next() {
+            return Ok(message);
+        }
+        Err(listener)
+    }
+
     /// Read the next value from the channel. This function will block and wait for data to
     /// become available.
     pub fn recv(&mut self) -> T {
         loop {
-            // try again as the listener can take some time to be registered and cause us to miss things
-            if let Ok(message) = self.try_read_next() {
-                return message;
+            match self.shared_recv() {
+                Ok(v) => {
+                    return v;
+                }
+                Err(listener) => listener.wait(),
             }
-            let listener = self.disruptor.writer_move.listen();
-            if let Ok(message) = self.try_read_next() {
-                return message;
-            }
-            listener.wait();
         }
     }
 }
@@ -200,15 +211,12 @@ where
     /// Async version of [`ReceiverCore::recv`]
     pub async fn async_recv(&mut self) -> T {
         loop {
-            // try again as the listener can take some time to be registered and cause us to miss things
-            if let Ok(message) = self.try_read_next() {
-                return message;
+            match self.shared_recv() {
+                Ok(v) => {
+                    return v;
+                }
+                Err(listener) => listener.await,
             }
-            let listener = self.disruptor.writer_move.listen();
-            if let Ok(message) = self.try_read_next() {
-                return message;
-            }
-            listener.await
         }
     }
 }
