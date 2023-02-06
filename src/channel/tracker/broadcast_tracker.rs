@@ -3,7 +3,6 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use async_trait::async_trait;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use std::thread;
 
 #[derive(Debug)]
 pub struct BroadcastTracker {
@@ -147,11 +146,18 @@ impl Tracker for BroadcastTracker {
 
     fn wait_for_tail(&self, expected_tail: usize) -> usize {
         loop {
-            match self.wait_for_shared(expected_tail) {
-                Ok(tail) => return tail,
-                Err(listener) => listener.wait(),
+            let tail = self.tail.load(Ordering::Acquire);
+            if tail >= expected_tail {
+                return tail;
             }
+            core::hint::spin_loop();
         }
+        // loop {
+        //     match self.wait_for_shared(expected_tail) {
+        //         Ok(tail) => return tail,
+        //         Err(listener) => listener.wait(),
+        //     }
+        // }
     }
 
     async fn wait_for_tail_async(&self, expected_tail: usize) -> usize {

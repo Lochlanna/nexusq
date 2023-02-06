@@ -183,7 +183,9 @@ where
                 Ordering::Acquire,
             )
             .is_err()
-        {}
+        {
+            core::hint::spin_loop()
+        }
         // Notify other threads that a value has been written
         self.disruptor.writer_move.notify(usize::MAX);
 

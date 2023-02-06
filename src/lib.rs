@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 #![doc = include_str!("../README.md")]
-#![no_std]
+// #![cfg(feature = "no-std")]
+// #![no_std]
 
 #[cfg(test)]
 extern crate std;
@@ -10,7 +11,7 @@ extern crate alloc;
 #[cfg(test)]
 mod bench_test;
 mod channel;
-mod event;
+mod wait_strategy;
 
 pub use channel::{
     channel,

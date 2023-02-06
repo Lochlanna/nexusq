@@ -4,7 +4,6 @@ use crate::BroadcastSender;
 use alloc::sync::Arc;
 use async_trait::async_trait;
 use core::sync::atomic::Ordering;
-use std::thread;
 
 #[derive(Debug)]
 pub enum ReaderError {
@@ -179,14 +178,20 @@ where
     }
 
     fn shared_recv(&mut self) -> Result<T, event_listener::EventListener> {
-        if let Ok(message) = self.try_read_next() {
-            return Ok(message);
+        loop {
+            if let Ok(next) = self.try_read_next() {
+                return Ok(next);
+            }
+            core::hint::spin_loop();
         }
-        let listener = self.disruptor.writer_move.listen();
-        if let Ok(message) = self.try_read_next() {
-            return Ok(message);
-        }
-        Err(listener)
+        // if let Ok(message) = self.try_read_next() {
+        //     return Ok(message);
+        // }
+        // let listener = self.disruptor.writer_move.listen();
+        // if let Ok(message) = self.try_read_next() {
+        //     return Ok(message);
+        // }
+        // Err(listener)
     }
 
     /// Read the next value from the channel. This function will block and wait for data to

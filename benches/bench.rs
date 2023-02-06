@@ -254,14 +254,14 @@ impl Display for RunParam {
 
 fn throughput(c: &mut Criterion) {
     let num_elements = 10000;
-    let max_writers = 1;
-    let max_readers = 1;
+    let max_writers = 4;
+    let max_readers = 4;
 
     let pool = Pool::<ThunkWorker<()>>::new(max_writers + max_readers);
     let (tx, mut rx) = std::sync::mpsc::channel();
 
-    for num_writers in 1..=max_writers {
-        for num_readers in 1..=max_readers {
+    for num_writers in 4..=max_writers {
+        for num_readers in 4..=max_readers {
             let mut group = c.benchmark_group(format!("{num_writers}w, {num_readers}r"));
             let input = (num_writers, num_readers);
             group.throughput(Throughput::Elements(
@@ -280,32 +280,32 @@ fn throughput(c: &mut Criterion) {
                     ))
                 });
             });
-            group.bench_with_input("multiq", &input, |b, &input| {
-                b.iter_custom(|iters| {
-                    black_box(multiq(
-                        num_elements,
-                        input.0,
-                        input.1,
-                        &pool,
-                        &tx,
-                        &mut rx,
-                        iters,
-                    ))
-                });
-            });
-            group.bench_with_input("multiq2", &input, |b, &input| {
-                b.iter_custom(|iters| {
-                    black_box(multiq2(
-                        num_elements,
-                        input.0,
-                        input.1,
-                        &pool,
-                        &tx,
-                        &mut rx,
-                        iters,
-                    ))
-                });
-            });
+            // group.bench_with_input("multiq", &input, |b, &input| {
+            //     b.iter_custom(|iters| {
+            //         black_box(multiq(
+            //             num_elements,
+            //             input.0,
+            //             input.1,
+            //             &pool,
+            //             &tx,
+            //             &mut rx,
+            //             iters,
+            //         ))
+            //     });
+            // });
+            // group.bench_with_input("multiq2", &input, |b, &input| {
+            //     b.iter_custom(|iters| {
+            //         black_box(multiq2(
+            //             num_elements,
+            //             input.0,
+            //             input.1,
+            //             &pool,
+            //             &tx,
+            //             &mut rx,
+            //             iters,
+            //         ))
+            //     });
+            // });
             group.finish();
         }
     }
