@@ -13,7 +13,7 @@ mod bench_test;
 mod channel;
 
 pub use channel::{
-    channel,
+    busy_channel,
     receiver::{BroadcastReceiver, ReaderError, Receiver},
     sender::{BroadcastSender, Sender, SenderError},
     Core,

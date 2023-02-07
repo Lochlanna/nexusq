@@ -14,7 +14,7 @@ pub trait Receiver<T>: Clone {
 
 #[derive(Debug)]
 pub struct BroadcastReceiver<CORE: Core> {
-    disruptor: Arc<CORE>,
+    core: Arc<CORE>,
     internal_cursor: isize,
     capacity: isize,
     committed_cache: isize,
@@ -25,9 +25,7 @@ where
     CORE: Core,
 {
     fn drop(&mut self) {
-        self.disruptor
-            .reader_tracker()
-            .de_register(self.internal_cursor);
+        self.core.reader_tracker().de_register(self.internal_cursor);
     }
 }
 
@@ -40,11 +38,20 @@ where
         let capacity = disruptor.capacity() as isize;
         let committed = disruptor.sender_tracker().current();
         Self {
-            disruptor,
+            core: disruptor,
             internal_cursor,
             capacity,
             committed_cache: committed,
         }
+    }
+}
+
+impl<CORE> From<BroadcastSender<CORE>> for BroadcastReceiver<CORE>
+where
+    CORE: Core,
+{
+    fn from(sender: BroadcastSender<CORE>) -> Self {
+        sender.get_core().into()
     }
 }
 
@@ -54,12 +61,12 @@ where
 {
     /// Creates a new receiver at the same point in the stream
     fn clone(&self) -> Self {
-        let tail = self.disruptor.reader_tracker().register();
-        self.disruptor
+        let tail = self.core.reader_tracker().register();
+        self.core
             .reader_tracker()
             .update(tail, self.internal_cursor);
         Self {
-            disruptor: self.disruptor.clone(),
+            core: self.core.clone(),
             internal_cursor: self.internal_cursor,
             capacity: self.capacity,
             committed_cache: self.committed_cache,
@@ -74,13 +81,16 @@ where
     #[inline(always)]
     fn increment_cursor(&mut self) {
         self.internal_cursor += 1;
-        self.disruptor
+        self.core
             .reader_tracker()
             .update(self.internal_cursor - 1, self.internal_cursor)
     }
     /// Creates a new receiver at the most recent entry in the stream
     pub fn add_stream(&self) -> Self {
-        self.disruptor.clone().into()
+        self.core.clone().into()
+    }
+    pub(crate) fn get_core(&self) -> Arc<CORE> {
+        self.core.clone()
     }
 }
 
@@ -93,7 +103,7 @@ where
     /// a [`ReaderError::NoNewData`] if there is no data available
     fn try_read_next(&mut self) -> Result<CORE::T, ReaderError> {
         if self.internal_cursor > self.committed_cache {
-            self.committed_cache = self.disruptor.sender_tracker().current();
+            self.committed_cache = self.core.sender_tracker().current();
             if self.internal_cursor > self.committed_cache {
                 return Err(ReaderError::NoNewData);
             }
@@ -105,7 +115,7 @@ where
         // the value has been committed so it's safe to read it!
         let value;
         unsafe {
-            value = (*self.disruptor.ring()).get_unchecked(index).clone();
+            value = (*self.core.ring()).get_unchecked(index).clone();
         }
         self.increment_cursor();
         Ok(value)
@@ -114,9 +124,7 @@ where
     /// Read the next value from the channel. This function will block and wait for data to
     /// become available.
     pub fn recv(&mut self) -> CORE::T {
-        self.disruptor
-            .sender_tracker()
-            .wait_for(self.internal_cursor);
+        self.core.sender_tracker().wait_for(self.internal_cursor);
         self.try_read_next().expect("value wasn't ready!")
     }
 }
@@ -133,16 +141,15 @@ where
 
 #[cfg(test)]
 mod receiver_tests {
-    use crate::channel::sender::Sender;
     use crate::channel::*;
-    use crate::Receiver;
 
     #[test]
     fn receiver_from_sender() {
-        // let (mut sender, _) = channel(10);
-        // sender.send(42).expect("couldn't send");
-        // let mut receiver: BroadcastReceiver<i32, BusySpinWaitStrategy> = (&sender).into();
-        // let v = receiver.recv().expect("couldn't receive");
-        // assert_eq!(v, 42);
+        let (mut sender, _) = busy_channel(10);
+        sender.send(42).expect("couldn't send");
+        let mut receiver: BroadcastReceiver<Ring<i32, BlockingWaitStrategy, BlockingWaitStrategy>> =
+            sender.into();
+        let v = receiver.recv();
+        assert_eq!(v, 42);
     }
 }

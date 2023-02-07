@@ -23,12 +23,14 @@ where
     fn chase_tail(&self, from: isize) {
         let mut id = from;
         loop {
-            //TODO maybe there is an optimisation here...
+            if self.num_receivers.load(Ordering::Acquire) < 1 {
+                //leave the tail as is :(
+                return;
+            }
+            let index = (id as usize).fmod(self.counters.len());
             let cell;
             unsafe {
-                cell = self
-                    .counters
-                    .get_unchecked((id as usize).fmod(self.counters.len()));
+                cell = self.counters.get_unchecked(index);
             }
             if cell.load(Ordering::Acquire) > 0 {
                 if cell.fetch_add(1, Ordering::SeqCst) > 0 {
@@ -71,11 +73,10 @@ where
         self.num_receivers.fetch_add(1, Ordering::SeqCst);
         let tail_pos = self.tail.load(Ordering::Acquire);
         let index = (tail_pos as usize).fmod(self.counters.len());
-        //TODO there is a race condition here!
+        //TODO there is a race condition here! The tail could move!
         unsafe {
-            self.counters
-                .get_unchecked(index)
-                .fetch_add(1, Ordering::SeqCst);
+            let cell = self.counters.get_unchecked(index);
+            cell.fetch_add(1, Ordering::SeqCst);
         }
         tail_pos
     }
@@ -100,13 +101,13 @@ where
         to_cell.fetch_add(1, Ordering::SeqCst);
         let previous = from_cell.fetch_sub(1, Ordering::SeqCst);
 
-        //Assume there is at least one receiver so don't need to check here
         if previous == 1
             && self
                 .tail
                 .compare_exchange(from, to, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
         {
+            // we have moved the tail!
             self.wait_strategy.notify();
         }
     }
@@ -121,12 +122,14 @@ where
                 .fetch_sub(1, Ordering::SeqCst);
         }
         debug_assert!(previous > 0);
-        let num_left = self.num_receivers.fetch_sub(1, Ordering::SeqCst) - 1;
-        //TODO what to do with the tail when we go to zero...??? currently will lock the sender forever!!
-        // We could return error on slowest to notify sender of this
-        if previous == 1 && at == self.tail.load(Ordering::Acquire) && num_left > 0 {
+        let tail = self.tail.load(Ordering::Acquire);
+        if previous == 1 && at == tail {
+            if self.num_receivers.fetch_sub(1, Ordering::SeqCst) > 1 {
+                self.chase_tail(at);
+            }
             // we have just removed the tail receiver so we need to chase the tail to find it
-            // self.chase_tail(at);
+        } else {
+            self.num_receivers.fetch_sub(1, Ordering::SeqCst);
         }
     }
 }
@@ -148,7 +151,6 @@ mod tracker_tests {
     use super::*;
     use crate::channel::wait_strategy::BusySpinWaitStrategy;
     use std::thread;
-    use std::thread::current;
     use std::time::Duration;
 
     #[test]
@@ -175,6 +177,8 @@ mod tracker_tests {
         assert_eq!(tracker.counters[6].load(Ordering::SeqCst), 0);
         assert_eq!(tracker.counters[7].load(Ordering::SeqCst), 1);
         assert_eq!(tracker.current(), 7);
+
+        tracker.de_register(7);
     }
 
     #[test]

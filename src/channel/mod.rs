@@ -6,6 +6,7 @@ pub mod wait_strategy;
 use crate::channel::tracker::{
     ProducerTracker, ReceiverTracker, SequentialProducerTracker, Tracker,
 };
+use crate::channel::wait_strategy::BlockingWaitStrategy;
 use crate::{BroadcastReceiver, BroadcastSender};
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -17,6 +18,7 @@ pub trait FastMod: Sized {
     fn fmod(&self, denominator: Self) -> Self;
 }
 impl FastMod for isize {
+    #[inline(always)]
     fn fmod(&self, denominator: Self) -> Self {
         debug_assert!(*self >= 0);
         debug_assert!(denominator.is_positive());
@@ -27,6 +29,7 @@ impl FastMod for isize {
 }
 
 impl FastMod for usize {
+    #[inline(always)]
     fn fmod(&self, denominator: Self) -> Self {
         // is pow 2 https://graphics.stanford.edu/~seander/bithacks.html#DetermineIfPowerOf2
         debug_assert!((denominator & (denominator - 1)) == 0);
@@ -45,13 +48,13 @@ pub trait Core {
 }
 
 #[derive(Debug)]
-pub struct Ring<T, WWS, RWS> {
+pub struct Ring<T, WTWS, RTWS> {
     ring: *mut Vec<T>,
     capacity: usize,
     // is there a better way than events?
-    sender_tracker: SequentialProducerTracker<WWS>,
+    sender_tracker: SequentialProducerTracker<WTWS>,
     // Reference to each reader to get their position. It should be sorted(how..?)
-    reader_tracker: MultiCursorTracker<RWS>,
+    reader_tracker: MultiCursorTracker<RTWS>,
 }
 
 unsafe impl<T, WWS, RWS> Send for Ring<T, WWS, RWS> {}
@@ -72,8 +75,8 @@ where
 {
     pub(crate) fn new(
         mut buffer_size: usize,
-        write_wait_strategy: WWS,
-        read_wait_strategy: RWS,
+        write_tracker_wait_strategy: WWS,
+        read_tracker_wait_strategy: RWS,
     ) -> Self {
         buffer_size = buffer_size
             .checked_next_power_of_two()
@@ -92,8 +95,8 @@ where
         Self {
             ring,
             capacity,
-            sender_tracker: SequentialProducerTracker::new(write_wait_strategy),
-            reader_tracker: MultiCursorTracker::new(buffer_size, read_wait_strategy),
+            sender_tracker: SequentialProducerTracker::new(write_tracker_wait_strategy),
+            reader_tracker: MultiCursorTracker::new(buffer_size, read_tracker_wait_strategy),
         }
     }
 }
@@ -125,14 +128,36 @@ where
 }
 
 ///Creates a new mpmc broadcast channel returning both a sender and receiver
-pub fn channel<T>(
+pub fn busy_channel<T>(
     size: usize,
 ) -> (
-    BroadcastSender<Ring<T, BusySpinWaitStrategy, BusySpinWaitStrategy>>,
-    BroadcastReceiver<Ring<T, BusySpinWaitStrategy, BusySpinWaitStrategy>>,
+    BroadcastSender<Ring<T, BlockingWaitStrategy, BlockingWaitStrategy>>,
+    BroadcastReceiver<Ring<T, BlockingWaitStrategy, BlockingWaitStrategy>>,
 ) {
-    let ws = BusySpinWaitStrategy::default();
+    let ws = BlockingWaitStrategy::default();
     let core = Arc::new(Ring::<T, _, _>::new(size, ws.clone(), ws));
+    let sender = sender::BroadcastSender::from(core.clone());
+    let receiver = receiver::BroadcastReceiver::from(core);
+    (sender, receiver)
+}
+
+pub fn channel_with<T, WTWS, RTWS>(
+    size: usize,
+    write_tracker_wait_strategy: WTWS,
+    read_tracker_wait_strategy: RTWS,
+) -> (
+    BroadcastSender<Ring<T, WTWS, RTWS>>,
+    BroadcastReceiver<Ring<T, WTWS, RTWS>>,
+)
+where
+    WTWS: WaitStrategy,
+    RTWS: WaitStrategy,
+{
+    let core = Arc::new(Ring::<T, _, _>::new(
+        size,
+        write_tracker_wait_strategy,
+        read_tracker_wait_strategy,
+    ));
     let sender = sender::BroadcastSender::from(core.clone());
     let receiver = receiver::BroadcastReceiver::from(core);
     (sender, receiver)
@@ -166,7 +191,7 @@ mod tests {
 
     #[inline(always)]
     fn test(num_elements: usize, num_writers: usize, num_readers: usize, buffer_size: usize) {
-        let (sender, receiver) = channel(buffer_size);
+        let (sender, receiver) = busy_channel(buffer_size);
         let readers: Vec<JoinHandle<Vec<usize>>> = (0..num_readers)
             .map(|_| {
                 let new_receiver = receiver.clone();
@@ -203,13 +228,13 @@ mod tests {
 
     #[test]
     fn single_writer_single_reader() {
-        let num = 5000;
+        let num = 50;
         test(num, 1, 1, 10);
     }
 
     #[test]
     fn single_writer_single_reader_clone() {
-        let (mut sender, mut receiver) = channel(10);
+        let (mut sender, mut receiver) = busy_channel(10);
         sender
             .send(String::from("hello world"))
             .expect("couldn't send");

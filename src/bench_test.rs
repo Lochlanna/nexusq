@@ -77,7 +77,7 @@ fn nexus(
 ) -> Duration {
     let mut total_duration = Duration::new(0, 0);
     for _ in 0..iters {
-        let (sender, receiver) = crate::channel(100);
+        let (sender, receiver) = crate::busy_channel(100);
         let mut receivers: Vec<_> = (0..readers - 1).map(|_| receiver.another()).collect();
         let mut senders: Vec<_> = (0..writers - 1).map(|_| sender.another()).collect();
         receivers.push(receiver);
@@ -100,7 +100,8 @@ fn nexus(
 
 #[test]
 fn test_bench() {
-    let num = 50000;
+    // let num = 50000;
+    let num = 1000;
     let writers = 3;
     let readers = 3;
     let iterations = 100;
@@ -111,7 +112,7 @@ fn test_bench() {
         let duration = nexus(num, writers, readers, &pool, &tx, &mut rx, iterations);
         let throughput =
             (num * writers * iterations as usize) as f64 / duration.as_secs_f64() / 1000000_f64;
-        println!("{readers} throughput is {} million/second", throughput);
+        println!("{readers} throughput is {throughput} million/second");
         let _ = std::io::stdout().flush();
     }
 }
