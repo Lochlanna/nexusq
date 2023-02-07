@@ -62,13 +62,10 @@ where
     }
 
     fn commit(&self, id: isize) {
-        while self
-            .committed
-            .compare_exchange_weak(id - 1, id, Ordering::SeqCst, Ordering::Acquire)
-            .is_err()
-        {
-            core::hint::spin_loop()
-        }
+        let expected = id - 1;
+        self.wait_strategy.wait_for(&self.committed, expected);
+        debug_assert!(self.committed.load(Ordering::Acquire) == expected);
+        self.committed.store(id, Ordering::Release);
         self.wait_strategy.notify();
     }
 }

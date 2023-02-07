@@ -1,10 +1,9 @@
 use super::Tracker;
 use crate::channel::tracker::ReceiverTracker;
-use crate::channel::wait_strategy::{WaitStrategy, Waitable};
+use crate::channel::wait_strategy::WaitStrategy;
 use crate::channel::FastMod;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::atomic::AtomicIsize;
+use core::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
 #[derive(Debug)]
 pub struct MultiCursorTracker<WS> {
@@ -105,7 +104,7 @@ where
         if previous == 1
             && self
                 .tail
-                .compare_exchange(from, to, Ordering::SeqCst, Ordering::Acquire)
+                .compare_exchange(from, to, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
         {
             self.wait_strategy.notify();
@@ -152,30 +151,31 @@ mod tracker_tests {
     use std::thread::current;
     use std::time::Duration;
 
-    // #[test]
-    // fn add_remove_receiver() {
-    //     let tracker = BroadcastTracker::new(10);
-    //     let shared_cursor_a = tracker.new_receiver();
-    //     assert_eq!(tracker.counters[0].load(Ordering::SeqCst), 1);
-    //     tracker.move_receiver(shared_cursor_a, 4);
-    //     assert_eq!(tracker.counters[0].load(Ordering::SeqCst), 0);
-    //     assert_eq!(tracker.counters[4].load(Ordering::SeqCst), 1);
-    //     assert_eq!(tracker.slowest(), 4);
-    //
-    //     let shared_cursor_b = tracker.new_receiver();
-    //     tracker.move_receiver(shared_cursor_b, 6);
-    //     assert_eq!(tracker.counters[6].load(Ordering::SeqCst), 1);
-    //     assert_eq!(tracker.slowest(), 4);
-    //
-    //     tracker.remove_receiver(4);
-    //     assert_eq!(tracker.counters[4].load(Ordering::SeqCst), 0);
-    //     assert_eq!(tracker.slowest(), 6);
-    //
-    //     tracker.move_receiver(6, 7);
-    //     assert_eq!(tracker.counters[6].load(Ordering::SeqCst), 0);
-    //     assert_eq!(tracker.counters[7].load(Ordering::SeqCst), 1);
-    //     assert_eq!(tracker.slowest(), 7);
-    // }
+    #[test]
+    fn add_remove_receiver() {
+        let tracker = MultiCursorTracker::new(10, BusySpinWaitStrategy::default());
+        let shared_cursor_a = tracker.register();
+        assert_eq!(tracker.counters[0].load(Ordering::SeqCst), 1);
+        tracker.update(shared_cursor_a, 4);
+        assert_eq!(tracker.counters[0].load(Ordering::SeqCst), 0);
+        assert_eq!(tracker.counters[4].load(Ordering::SeqCst), 1);
+        assert_eq!(tracker.current(), 4);
+
+        let shared_cursor_b = tracker.register();
+        tracker.update(shared_cursor_b, 5);
+        assert_eq!(tracker.counters[5].load(Ordering::SeqCst), 1);
+        assert_eq!(tracker.current(), 4);
+
+        tracker.de_register(4);
+        assert_eq!(tracker.counters[4].load(Ordering::SeqCst), 0);
+        assert_eq!(tracker.current(), 5);
+
+        tracker.update(5, 7);
+        assert_eq!(tracker.counters[5].load(Ordering::SeqCst), 0);
+        assert_eq!(tracker.counters[6].load(Ordering::SeqCst), 0);
+        assert_eq!(tracker.counters[7].load(Ordering::SeqCst), 1);
+        assert_eq!(tracker.current(), 7);
+    }
 
     #[test]
     fn wait_for_tail() {

@@ -116,7 +116,7 @@ where
     pub fn recv(&mut self) -> CORE::T {
         self.disruptor
             .sender_tracker()
-            .wait_for(self.internal_cursor as isize);
+            .wait_for(self.internal_cursor);
         self.try_read_next().expect("value wasn't ready!")
     }
 }

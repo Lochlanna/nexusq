@@ -7,6 +7,7 @@ pub trait Waitable: Sync {
 
 impl Waitable for AtomicIsize {
     type InnerType = isize;
+    #[inline(always)]
     fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
         let value = self.load(Ordering::Acquire);
         if value >= *expected {
@@ -19,6 +20,7 @@ impl Waitable for AtomicIsize {
 impl Waitable for AtomicUsize {
     type InnerType = usize;
 
+    #[inline(always)]
     fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
         let value = self.load(Ordering::Acquire);
         if value >= *expected {
@@ -30,6 +32,7 @@ impl Waitable for AtomicUsize {
 
 impl Waitable for &AtomicIsize {
     type InnerType = isize;
+    #[inline(always)]
     fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
         let value = self.load(Ordering::Acquire);
         if value >= *expected {
@@ -42,6 +45,7 @@ impl Waitable for &AtomicIsize {
 impl Waitable for &AtomicUsize {
     type InnerType = usize;
 
+    #[inline(always)]
     fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
         let value = self.load(Ordering::Acquire);
         if value >= *expected {
