@@ -127,7 +127,7 @@ mod sender_tests {
 
     #[test]
     fn sender_from_receiver() {
-        let (_, mut receiver) = busy_channel(10);
+        let (_, mut receiver) = channel(10);
         let mut sender: BroadcastSender<Ring<i32, BlockWait, BlockWait>> = receiver.clone().into();
         sender.send(42).expect("couldn't send");
         let v = receiver.recv();

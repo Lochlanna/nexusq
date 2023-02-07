@@ -6,7 +6,7 @@ pub mod wait_strategy;
 use crate::channel::tracker::{
     ProducerTracker, ReceiverTracker, SequentialProducerTracker, Tracker,
 };
-use crate::channel::wait_strategy::BlockWait;
+use crate::channel::wait_strategy::{BlockWait, BusyWait};
 use crate::{BroadcastReceiver, BroadcastSender};
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -128,17 +128,13 @@ where
 }
 
 ///Creates a new mpmc broadcast channel returning both a sender and receiver
-pub fn busy_channel<T>(
+pub fn channel<T>(
     size: usize,
 ) -> (
     BroadcastSender<Ring<T, BlockWait, BlockWait>>,
     BroadcastReceiver<Ring<T, BlockWait, BlockWait>>,
 ) {
-    let ws = BlockWait::default();
-    let core = Arc::new(Ring::<T, _, _>::new(size, ws.clone(), ws));
-    let sender = sender::BroadcastSender::from(core.clone());
-    let receiver = receiver::BroadcastReceiver::from(core);
-    (sender, receiver)
+    channel_with(size, BlockWait::default(), BlockWait::default())
 }
 
 pub fn channel_with<T, WTWS, RTWS>(
@@ -191,7 +187,7 @@ mod tests {
 
     #[inline(always)]
     fn test(num_elements: usize, num_writers: usize, num_readers: usize, buffer_size: usize) {
-        let (sender, receiver) = busy_channel(buffer_size);
+        let (sender, receiver) = channel(buffer_size);
         let readers: Vec<JoinHandle<Vec<usize>>> = (0..num_readers)
             .map(|_| {
                 let new_receiver = receiver.clone();
@@ -234,7 +230,7 @@ mod tests {
 
     #[test]
     fn single_writer_single_reader_clone() {
-        let (mut sender, mut receiver) = busy_channel(10);
+        let (mut sender, mut receiver) = channel(10);
         sender
             .send(String::from("hello world"))
             .expect("couldn't send");
