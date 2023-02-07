@@ -62,9 +62,9 @@ pub trait WaitStrategy {
 
 /// This is a raw spin loop. Super responsive. If you've got enough cores
 #[derive(Debug, Clone, Default)]
-pub struct BusySpinWaitStrategy {}
+pub struct BusyWait {}
 
-impl WaitStrategy for BusySpinWaitStrategy {
+impl WaitStrategy for BusyWait {
     fn wait_for<V: Waitable>(&self, value: V, expected: V::InnerType) -> V::InnerType {
         loop {
             if let Some(result) = value.greater_than_equal_to(&expected) {
@@ -78,13 +78,13 @@ impl WaitStrategy for BusySpinWaitStrategy {
 /// This is a yield loop. decently responsive.
 /// Will let other things progress but still has high cpu usage
 #[derive(Debug, Clone, Default)]
-pub struct YieldingWaitStrategy {}
+pub struct YieldWait {}
 
-impl YieldingWaitStrategy {
+impl YieldWait {
     const SPIN_TRIES: u32 = 100;
 }
 
-impl WaitStrategy for YieldingWaitStrategy {
+impl WaitStrategy for YieldWait {
     fn wait_for<V: Waitable>(&self, value: V, expected: V::InnerType) -> V::InnerType {
         let mut counter = Self::SPIN_TRIES;
         loop {
@@ -103,12 +103,12 @@ impl WaitStrategy for YieldingWaitStrategy {
 
 /// This is a raw spin loop. Super responsive. If you've got enough cores
 #[derive(Debug, Clone)]
-pub struct SleepingWaitStrategy {
+pub struct SleepWait {
     sleep_time_ns: std::time::Duration,
     num_retries: u32,
 }
 
-impl SleepingWaitStrategy {
+impl SleepWait {
     const SPIN_THRESHOLD: u32 = 100;
     pub fn new(sleep_time_ns: std::time::Duration, num_retries: u32) -> Self {
         Self {
@@ -118,7 +118,7 @@ impl SleepingWaitStrategy {
     }
 }
 
-impl Default for SleepingWaitStrategy {
+impl Default for SleepWait {
     fn default() -> Self {
         Self {
             sleep_time_ns: std::time::Duration::from_nanos(100),
@@ -127,7 +127,7 @@ impl Default for SleepingWaitStrategy {
     }
 }
 
-impl WaitStrategy for SleepingWaitStrategy {
+impl WaitStrategy for SleepWait {
     fn wait_for<V: Waitable>(&self, value: V, expected: V::InnerType) -> V::InnerType {
         let mut counter = self.num_retries;
         loop {
@@ -148,12 +148,12 @@ impl WaitStrategy for SleepingWaitStrategy {
 }
 
 #[derive(Debug)]
-pub struct BlockingWaitStrategy {
+pub struct BlockWait {
     event: event_listener::Event,
     num_retries: u32,
 }
 
-impl Clone for BlockingWaitStrategy {
+impl Clone for BlockWait {
     fn clone(&self) -> Self {
         Self {
             event: Default::default(),
@@ -162,7 +162,7 @@ impl Clone for BlockingWaitStrategy {
     }
 }
 
-impl Default for BlockingWaitStrategy {
+impl Default for BlockWait {
     fn default() -> Self {
         Self {
             event: event_listener::Event::default(),
@@ -171,7 +171,7 @@ impl Default for BlockingWaitStrategy {
     }
 }
 
-impl BlockingWaitStrategy {
+impl BlockWait {
     const DEFAULT_NUM_RETRIES: u32 = 100;
     const SPIN_THRESHOLD: u32 = 100;
     pub fn new(num_retries: u32) -> Self {
@@ -182,7 +182,7 @@ impl BlockingWaitStrategy {
     }
 }
 
-impl WaitStrategy for BlockingWaitStrategy {
+impl WaitStrategy for BlockWait {
     fn wait_for<V: Waitable>(&self, value: V, expected: V::InnerType) -> V::InnerType {
         let mut counter = self.num_retries;
         loop {

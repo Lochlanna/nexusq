@@ -6,7 +6,7 @@ pub mod wait_strategy;
 use crate::channel::tracker::{
     ProducerTracker, ReceiverTracker, SequentialProducerTracker, Tracker,
 };
-use crate::channel::wait_strategy::BlockingWaitStrategy;
+use crate::channel::wait_strategy::BlockWait;
 use crate::{BroadcastReceiver, BroadcastSender};
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -131,10 +131,10 @@ where
 pub fn busy_channel<T>(
     size: usize,
 ) -> (
-    BroadcastSender<Ring<T, BlockingWaitStrategy, BlockingWaitStrategy>>,
-    BroadcastReceiver<Ring<T, BlockingWaitStrategy, BlockingWaitStrategy>>,
+    BroadcastSender<Ring<T, BlockWait, BlockWait>>,
+    BroadcastReceiver<Ring<T, BlockWait, BlockWait>>,
 ) {
-    let ws = BlockingWaitStrategy::default();
+    let ws = BlockWait::default();
     let core = Arc::new(Ring::<T, _, _>::new(size, ws.clone(), ws));
     let sender = sender::BroadcastSender::from(core.clone());
     let receiver = receiver::BroadcastReceiver::from(core);

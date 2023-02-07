@@ -149,13 +149,13 @@ where
 #[cfg(test)]
 mod tracker_tests {
     use super::*;
-    use crate::channel::wait_strategy::BusySpinWaitStrategy;
+    use crate::channel::wait_strategy::BusyWait;
     use std::thread;
     use std::time::Duration;
 
     #[test]
     fn add_remove_receiver() {
-        let tracker = MultiCursorTracker::new(10, BusySpinWaitStrategy::default());
+        let tracker = MultiCursorTracker::new(10, BusyWait::default());
         let shared_cursor_a = tracker.register();
         assert_eq!(tracker.counters[0].load(Ordering::SeqCst), 1);
         tracker.update(shared_cursor_a, 4);
@@ -183,7 +183,7 @@ mod tracker_tests {
 
     #[test]
     fn wait_for_tail() {
-        let tracker = MultiCursorTracker::new(10, BusySpinWaitStrategy::default());
+        let tracker = MultiCursorTracker::new(10, BusyWait::default());
         let shared_cursor_a = tracker.register();
         tracker.update(shared_cursor_a, 4);
 
