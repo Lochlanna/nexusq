@@ -3,7 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::sync::mpsc::TrySendError;
 use std::time::{Duration, Instant};
 
-use nexusq::channel;
+use nexusq::busy_channel;
 use workerpool::thunk::{Thunk, ThunkWorker};
 use workerpool::Pool;
 

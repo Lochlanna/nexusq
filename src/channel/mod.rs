@@ -12,7 +12,7 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use tracker::broadcast_tracker::MultiCursorTracker;
-use wait_strategy::{BusySpinWaitStrategy, WaitStrategy};
+use wait_strategy::WaitStrategy;
 
 pub trait FastMod: Sized {
     fn fmod(&self, denominator: Self) -> Self;
