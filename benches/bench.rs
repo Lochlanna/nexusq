@@ -78,7 +78,7 @@ where
     <CORE as nexusq::Core>::T: Send,
 {
     fn test_send(&mut self, value: CORE::T) {
-        self.send(value).expect("couldn't send");
+        self.send(value);
     }
 
     fn another(&self) -> Self {

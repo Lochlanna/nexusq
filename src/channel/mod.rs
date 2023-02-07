@@ -32,7 +32,7 @@ impl FastMod for usize {
     #[inline(always)]
     fn fmod(&self, denominator: Self) -> Self {
         // is pow 2 https://graphics.stanford.edu/~seander/bithacks.html#DetermineIfPowerOf2
-        debug_assert!(self.is_power_of_two());
+        debug_assert!(denominator.is_power_of_two());
         *self & (denominator - 1)
     }
 }

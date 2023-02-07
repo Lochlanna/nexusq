@@ -77,26 +77,36 @@ impl WaitStrategy for BusyWait {
 
 /// This is a yield loop. decently responsive.
 /// Will let other things progress but still has high cpu usage
-#[derive(Debug, Clone, Default)]
-pub struct YieldWait {}
+#[derive(Debug, Clone)]
+pub struct YieldWait {
+    num_spins: u32,
+}
 
 impl YieldWait {
-    const SPIN_TRIES: u32 = 100;
+    pub fn new(num_spins: u32) -> Self {
+        Self { num_spins }
+    }
+}
+
+impl Default for YieldWait {
+    fn default() -> Self {
+        Self::new(100)
+    }
 }
 
 impl WaitStrategy for YieldWait {
     fn wait_for<V: Waitable>(&self, value: V, expected: V::InnerType) -> V::InnerType {
-        let mut counter = Self::SPIN_TRIES;
+        for _ in 0..self.num_spins {
+            if let Some(result) = value.greater_than_equal_to(&expected) {
+                return result;
+            }
+            core::hint::spin_loop();
+        }
         loop {
             if let Some(result) = value.greater_than_equal_to(&expected) {
                 return result;
             }
-            if counter == 0 {
-                std::thread::yield_now()
-            } else {
-                counter -= 1;
-                std::hint::spin_loop();
-            }
+            std::thread::yield_now()
         }
     }
 }
@@ -105,44 +115,45 @@ impl WaitStrategy for YieldWait {
 #[derive(Debug, Clone)]
 pub struct SleepWait {
     sleep_time_ns: std::time::Duration,
-    num_retries: u32,
+    num_spin: u32,
+    num_yield: u32,
 }
 
 impl SleepWait {
-    const SPIN_THRESHOLD: u32 = 100;
-    pub fn new(sleep_time_ns: std::time::Duration, num_retries: u32) -> Self {
+    pub fn new(sleep_time_ns: std::time::Duration, num_spin: u32, num_yield: u32) -> Self {
         Self {
             sleep_time_ns,
-            num_retries,
+            num_spin,
+            num_yield,
         }
     }
 }
 
 impl Default for SleepWait {
     fn default() -> Self {
-        Self {
-            sleep_time_ns: std::time::Duration::from_nanos(100),
-            num_retries: 200,
-        }
+        Self::new(std::time::Duration::from_nanos(100), 100, 100)
     }
 }
 
 impl WaitStrategy for SleepWait {
     fn wait_for<V: Waitable>(&self, value: V, expected: V::InnerType) -> V::InnerType {
-        let mut counter = self.num_retries;
+        for _ in 0..self.num_spin {
+            if let Some(result) = value.greater_than_equal_to(&expected) {
+                return result;
+            }
+            core::hint::spin_loop();
+        }
+        for _ in 0..self.num_yield {
+            if let Some(result) = value.greater_than_equal_to(&expected) {
+                return result;
+            }
+            std::thread::yield_now();
+        }
         loop {
             if let Some(result) = value.greater_than_equal_to(&expected) {
                 return result;
             }
-            if counter > Self::SPIN_THRESHOLD {
-                counter -= 1;
-                core::hint::spin_loop();
-            } else if counter > 0 {
-                std::thread::yield_now();
-                counter -= 1;
-            } else {
-                std::thread::park_timeout(self.sleep_time_ns);
-            }
+            std::thread::park_timeout(self.sleep_time_ns);
         }
     }
 }
