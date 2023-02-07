@@ -1,6 +1,7 @@
 use super::Tracker;
 use crate::channel::tracker::ReceiverTracker;
-use crate::wait_strategy::{WaitStrategy, Waitable};
+use crate::channel::wait_strategy::{WaitStrategy, Waitable};
+use crate::channel::FastMod;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::atomic::AtomicIsize;
@@ -28,7 +29,7 @@ where
             unsafe {
                 cell = self
                     .counters
-                    .get_unchecked((id as usize) % self.counters.len());
+                    .get_unchecked((id as usize).fmod(self.counters.len()));
             }
             if cell.load(Ordering::Acquire) > 0 {
                 if cell.fetch_add(1, Ordering::SeqCst) > 0 {
@@ -48,7 +49,10 @@ where
         self.wait_strategy.notify();
     }
     pub fn new(mut size: usize, wait_strategy: WS) -> Self {
-        size += 1;
+        //TODO this could get really massive...
+        size = (size + 1)
+            .checked_next_power_of_two()
+            .expect("usize wrapped!");
         let mut counters = Vec::new();
         counters.resize_with(size, Default::default);
         Self {
@@ -67,7 +71,7 @@ where
     fn register(&self) -> isize {
         self.num_receivers.fetch_add(1, Ordering::SeqCst);
         let tail_pos = self.tail.load(Ordering::Acquire);
-        let index = (tail_pos as usize) % self.counters.len();
+        let index = (tail_pos as usize).fmod(self.counters.len());
         //TODO there is a race condition here!
         unsafe {
             self.counters
@@ -84,8 +88,8 @@ where
         if to == from {
             return;
         }
-        let from_idx = (from as usize) % self.counters.len();
-        let to_idx = (to as usize) % self.counters.len();
+        let from_idx = (from as usize).fmod(self.counters.len());
+        let to_idx = (to as usize).fmod(self.counters.len());
         let to_cell;
         let from_cell;
 
@@ -109,7 +113,7 @@ where
     }
 
     fn de_register(&self, at: isize) {
-        let index = (at as usize) % self.counters.len();
+        let index = (at as usize).fmod(self.counters.len());
         let previous;
         unsafe {
             previous = self
@@ -143,7 +147,7 @@ where
 #[cfg(test)]
 mod tracker_tests {
     use super::*;
-    use crate::wait_strategy::BusySpinWaitStrategy;
+    use crate::channel::wait_strategy::BusySpinWaitStrategy;
     use std::thread;
     use std::thread::current;
     use std::time::Duration;

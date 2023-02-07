@@ -22,7 +22,7 @@ pub trait Sender<T: Send>: Clone {
 #[derive(Debug)]
 pub struct BroadcastSender<CORE> {
     disruptor: Arc<CORE>,
-    capacity: usize,
+    capacity: isize,
     cached_slowest_reader: isize,
 }
 
@@ -41,7 +41,7 @@ where
     CORE: Core,
 {
     fn from(disruptor: Arc<CORE>) -> Self {
-        let capacity = disruptor.capacity();
+        let capacity = disruptor.capacity() as isize;
         let slowest = disruptor.reader_tracker().current();
         Self {
             disruptor,
@@ -57,18 +57,18 @@ where
 {
     //TODO this can probably be cut down / optimised a bit...
     fn claim(&mut self, num_to_claim: usize) -> Result<isize, SenderError> {
-        if num_to_claim > self.capacity {
+        if num_to_claim as isize > self.capacity {
             return Err(SenderError::InputTooLarge);
         }
 
         let claimed = self.disruptor.sender_tracker().claim(num_to_claim);
-        let tail = claimed - self.capacity as isize;
+        let tail = claimed - self.capacity;
 
         if tail < 0 || self.cached_slowest_reader > tail {
             return Ok(claimed);
         }
 
-        self.cached_slowest_reader = self.disruptor.reader_tracker().wait_for(tail + 1) as isize;
+        self.cached_slowest_reader = self.disruptor.reader_tracker().wait_for(tail + 1);
 
         Ok(claimed)
     }
@@ -80,7 +80,8 @@ where
 
     #[inline(always)]
     fn internal_send(&mut self, value: CORE::T, claimed_id: isize) -> Result<(), SenderError> {
-        let index = claimed_id as usize % self.capacity;
+        debug_assert!(claimed_id >= 0);
+        let index = claimed_id.fmod(self.capacity) as usize;
 
         let old_value;
         unsafe {
@@ -92,7 +93,7 @@ where
 
         // We do this at the end to ensure that we're not worrying about wierd drop functions or
         // allocations happening during the critical path
-        if (claimed_id as usize) < self.capacity {
+        if claimed_id < self.capacity {
             forget(old_value);
         } else {
             drop(old_value);

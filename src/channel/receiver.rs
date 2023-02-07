@@ -92,16 +92,16 @@ where
     /// Try to read the next value from the channel. This function will not block and will return
     /// a [`ReaderError::NoNewData`] if there is no data available
     fn try_read_next(&mut self) -> Result<CORE::T, ReaderError> {
-        if self.internal_cursor as isize > self.committed_cache {
+        if self.internal_cursor > self.committed_cache {
             self.committed_cache = self.disruptor.sender_tracker().current();
-            if self.internal_cursor as isize > self.committed_cache {
+            if self.internal_cursor > self.committed_cache {
                 return Err(ReaderError::NoNewData);
             }
         }
         if self.committed_cache < 0 {
             return Err(ReaderError::NoNewData);
         }
-        let index = (self.internal_cursor % self.capacity) as usize;
+        let index = self.internal_cursor.fmod(self.capacity) as usize;
         // the value has been committed so it's safe to read it!
         let value;
         unsafe {
@@ -135,7 +135,6 @@ where
 mod receiver_tests {
     use crate::channel::sender::Sender;
     use crate::channel::*;
-    use crate::wait_strategy::BusySpinWaitStrategy;
     use crate::Receiver;
 
     #[test]

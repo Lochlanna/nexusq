@@ -1,6 +1,6 @@
 pub mod broadcast_tracker;
 
-use crate::wait_strategy::{WaitStrategy, Waitable};
+use crate::channel::wait_strategy::{WaitStrategy, Waitable};
 use std::sync::atomic::{AtomicIsize, Ordering};
 
 pub trait ReceiverTracker {

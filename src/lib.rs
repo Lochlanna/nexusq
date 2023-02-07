@@ -11,7 +11,6 @@ extern crate alloc;
 #[cfg(test)]
 mod bench_test;
 mod channel;
-mod wait_strategy;
 
 pub use channel::{
     channel,

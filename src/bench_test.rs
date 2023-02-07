@@ -100,7 +100,7 @@ fn nexus(
 
 #[test]
 fn test_bench() {
-    let num = 10000;
+    let num = 50000;
     let writers = 3;
     let readers = 3;
     let iterations = 100;

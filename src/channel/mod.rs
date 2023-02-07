@@ -1,16 +1,38 @@
 pub mod receiver;
 pub mod sender;
 pub mod tracker;
+pub mod wait_strategy;
 
 use crate::channel::tracker::{
     ProducerTracker, ReceiverTracker, SequentialProducerTracker, Tracker,
 };
-use crate::wait_strategy::{BusySpinWaitStrategy, WaitStrategy};
 use crate::{BroadcastReceiver, BroadcastSender};
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use tracker::broadcast_tracker::MultiCursorTracker;
+use wait_strategy::{BusySpinWaitStrategy, WaitStrategy};
+
+pub trait FastMod: Sized {
+    fn fmod(&self, denominator: Self) -> Self;
+}
+impl FastMod for isize {
+    fn fmod(&self, denominator: Self) -> Self {
+        debug_assert!(*self >= 0);
+        debug_assert!(denominator.is_positive());
+        // is pow 2 https://graphics.stanford.edu/~seander/bithacks.html#DetermineIfPowerOf2
+        debug_assert!((denominator & (denominator - 1)) == 0);
+        *self & (denominator - 1)
+    }
+}
+
+impl FastMod for usize {
+    fn fmod(&self, denominator: Self) -> Self {
+        // is pow 2 https://graphics.stanford.edu/~seander/bithacks.html#DetermineIfPowerOf2
+        debug_assert!((denominator & (denominator - 1)) == 0);
+        *self & (denominator - 1)
+    }
+}
 
 pub trait Core {
     type T;
@@ -49,10 +71,13 @@ where
     RWS: WaitStrategy,
 {
     pub(crate) fn new(
-        buffer_size: usize,
+        mut buffer_size: usize,
         write_wait_strategy: WWS,
         read_wait_strategy: RWS,
     ) -> Self {
+        buffer_size = buffer_size
+            .checked_next_power_of_two()
+            .expect("usize wrapped!");
         let mut ring = Box::new(Vec::with_capacity(buffer_size));
         let capacity = ring.capacity();
         //TODO check that it's not bigger than isize::MAX
