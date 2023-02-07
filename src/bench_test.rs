@@ -13,11 +13,11 @@ trait TestReceiver: Send + 'static {
     fn another(&self) -> Self;
 }
 
-impl<T> TestReceiver for crate::BroadcastReceiver<T>
+impl<X> TestReceiver for X
 where
-    T: 'static + Clone + Send,
+    X: Receiver<usize> + Send + 'static,
 {
-    type Item = T;
+    type Item = usize;
 
     #[inline(always)]
     fn test_recv(&mut self) -> Self::Item {
@@ -39,11 +39,11 @@ trait TestSender<T>: Send + 'static {
     fn another(&self) -> Self;
 }
 
-impl<T> TestSender<T> for crate::BroadcastSender<T>
+impl<X> TestSender<usize> for X
 where
-    T: 'static + Clone + Send,
+    X: Sender<usize> + Send + 'static,
 {
-    fn test_send(&mut self, value: T) {
+    fn test_send(&mut self, value: usize) {
         self.send(value).expect("couldn't send");
     }
 

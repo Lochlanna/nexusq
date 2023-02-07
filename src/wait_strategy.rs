@@ -28,11 +28,36 @@ impl Waitable for AtomicUsize {
     }
 }
 
+impl Waitable for &AtomicIsize {
+    type InnerType = isize;
+    fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
+        let value = self.load(Ordering::Acquire);
+        if value >= *expected {
+            return Some(value);
+        }
+        None
+    }
+}
+
+impl Waitable for &AtomicUsize {
+    type InnerType = usize;
+
+    fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
+        let value = self.load(Ordering::Acquire);
+        if value >= *expected {
+            return Some(value);
+        }
+        None
+    }
+}
+
 pub trait WaitStrategy {
     fn wait_for<V: Waitable>(&self, value: V, expected: V::InnerType) -> V::InnerType;
+    fn notify(&self) {}
 }
 
 /// This is a raw spin loop. Super responsive. If you've got enough cores
+#[derive(Debug, Clone, Default)]
 pub struct BusySpinWaitStrategy {}
 
 impl WaitStrategy for BusySpinWaitStrategy {
@@ -48,6 +73,7 @@ impl WaitStrategy for BusySpinWaitStrategy {
 
 /// This is a yield loop. decently responsive.
 /// Will let other things progress but still has high cpu usage
+#[derive(Debug, Clone, Default)]
 pub struct YieldingWaitStrategy {}
 
 impl YieldingWaitStrategy {
@@ -72,6 +98,7 @@ impl WaitStrategy for YieldingWaitStrategy {
 }
 
 /// This is a raw spin loop. Super responsive. If you've got enough cores
+#[derive(Debug, Clone)]
 pub struct SleepingWaitStrategy {
     sleep_time_ns: std::time::Duration,
     num_retries: u32,
@@ -116,26 +143,42 @@ impl WaitStrategy for SleepingWaitStrategy {
     }
 }
 
-pub struct BlockingWaitStrategy<'a> {
-    event: &'a event_listener::Event,
+#[derive(Debug)]
+pub struct BlockingWaitStrategy {
+    event: event_listener::Event,
     num_retries: u32,
 }
 
-impl<'a> BlockingWaitStrategy<'a> {
-    const DEFAULT_NUM_RETRIES: u32 = 100;
-    const SPIN_THRESHOLD: u32 = 100;
-    pub fn new(event: &'a event_listener::Event, num_retries: u32) -> Self {
-        Self { event, num_retries }
-    }
-    pub fn default(event: &'a event_listener::Event) -> Self {
+impl Clone for BlockingWaitStrategy {
+    fn clone(&self) -> Self {
         Self {
-            event,
+            event: Default::default(),
+            num_retries: self.num_retries,
+        }
+    }
+}
+
+impl Default for BlockingWaitStrategy {
+    fn default() -> Self {
+        Self {
+            event: event_listener::Event::default(),
             num_retries: Self::DEFAULT_NUM_RETRIES,
         }
     }
 }
 
-impl<'a> WaitStrategy for BlockingWaitStrategy<'a> {
+impl BlockingWaitStrategy {
+    const DEFAULT_NUM_RETRIES: u32 = 100;
+    const SPIN_THRESHOLD: u32 = 100;
+    pub fn new(num_retries: u32) -> Self {
+        Self {
+            event: event_listener::Event::default(),
+            num_retries,
+        }
+    }
+}
+
+impl WaitStrategy for BlockingWaitStrategy {
     fn wait_for<V: Waitable>(&self, value: V, expected: V::InnerType) -> V::InnerType {
         let mut counter = self.num_retries;
         loop {
@@ -156,5 +199,8 @@ impl<'a> WaitStrategy for BlockingWaitStrategy<'a> {
                 listener.wait();
             }
         }
+    }
+    fn notify(&self) {
+        self.event.notify(usize::MAX);
     }
 }

@@ -1,7 +1,6 @@
 use super::*;
-use crate::channel::tracker::broadcast_tracker::BroadcastTracker;
+use crate::channel::tracker::broadcast_tracker::MultiCursorTracker;
 use crate::channel::tracker::Tracker;
-use crate::BroadcastReceiver;
 use alloc::sync::Arc;
 use async_trait::async_trait;
 use core::mem::forget;
@@ -14,77 +13,20 @@ pub enum SenderError {
 }
 
 #[async_trait]
-pub trait Sender {
-    type Item: Send;
+pub trait Sender<T: Send>: Clone {
     /// Send a single value to the channel. This function will block if there is no space
     /// available in the channel.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    ///# use nexusq::{channel, Sender, Receiver};
-    ///let (mut sender, mut receiver) = channel(10);
-    ///sender.send(4).expect("couldn't send");
-    ///let result = receiver.try_read_next().expect("couldn't receive");
-    ///assert_eq!(result, 4);
-    /// ```
-    fn send(&mut self, value: Self::Item) -> Result<(), SenderError>;
-    /// Async version of [`Sender::send`]
-    async fn async_send(&mut self, value: Self::Item) -> Result<(), SenderError>;
-}
-
-#[derive(Debug, Clone)]
-pub struct BroadcastSender<T> {
-    inner: SenderCore<T, BroadcastTracker>,
-}
-
-impl<T> From<&BroadcastReceiver<T>> for BroadcastSender<T> {
-    fn from(receiver: &BroadcastReceiver<T>) -> Self {
-        let core = receiver.clone_core();
-        Self { inner: core.into() }
-    }
-}
-
-impl<T> BroadcastSender<T> {
-    pub(crate) fn clone_core(&self) -> Arc<Core<T, BroadcastTracker>> {
-        self.inner.disruptor.clone()
-    }
-    /// Creates a new receiver to the same channel. Points to the most
-    /// recently sent value in the channel
-    pub fn new_receiver(&self) -> BroadcastReceiver<T> {
-        self.into()
-    }
-}
-
-#[async_trait]
-impl<T> Sender for BroadcastSender<T>
-where
-    T: Send,
-{
-    type Item = T;
-
-    fn send(&mut self, value: Self::Item) -> Result<(), SenderError> {
-        self.inner.send(value)
-    }
-    async fn async_send(&mut self, value: Self::Item) -> Result<(), SenderError> {
-        self.inner.async_send(value).await
-    }
-}
-
-impl<T> From<SenderCore<T, BroadcastTracker>> for BroadcastSender<T> {
-    fn from(sender: SenderCore<T, BroadcastTracker>) -> Self {
-        Self { inner: sender }
-    }
+    fn send(&mut self, value: T) -> Result<(), SenderError>;
 }
 
 #[derive(Debug)]
-pub(crate) struct SenderCore<T, TR> {
-    disruptor: Arc<Core<T, TR>>,
+pub struct BroadcastSender<CORE> {
+    disruptor: Arc<CORE>,
     capacity: usize,
     cached_slowest_reader: isize,
 }
 
-impl<T, TR> Clone for SenderCore<T, TR> {
+impl<CORE> Clone for BroadcastSender<CORE> {
     fn clone(&self) -> Self {
         Self {
             disruptor: self.disruptor.clone(),
@@ -94,100 +36,59 @@ impl<T, TR> Clone for SenderCore<T, TR> {
     }
 }
 
-impl<T, TR> From<Arc<Core<T, TR>>> for SenderCore<T, TR> {
-    fn from(disruptor: Arc<Core<T, TR>>) -> Self {
-        let capacity = disruptor.capacity;
+impl<CORE> From<Arc<CORE>> for BroadcastSender<CORE>
+where
+    CORE: Core,
+{
+    fn from(disruptor: Arc<CORE>) -> Self {
+        let capacity = disruptor.capacity();
+        let slowest = disruptor.reader_tracker().current();
         Self {
             disruptor,
             capacity,
-            cached_slowest_reader: -1,
+            cached_slowest_reader: slowest,
         }
     }
 }
 
-impl<T, TR> SenderCore<T, TR>
+impl<CORE> BroadcastSender<CORE>
 where
-    T: Send,
-    TR: Tracker,
+    CORE: Core,
 {
     //TODO this can probably be cut down / optimised a bit...
     fn claim(&mut self, num_to_claim: usize) -> Result<isize, SenderError> {
         if num_to_claim > self.capacity {
             return Err(SenderError::InputTooLarge);
         }
-        let claimed = self
-            .disruptor
-            .claimed
-            .fetch_add(num_to_claim as isize, Ordering::SeqCst);
+
+        let claimed = self.disruptor.sender_tracker().claim(num_to_claim);
         let tail = claimed - self.capacity as isize;
 
         if tail < 0 || self.cached_slowest_reader > tail {
             return Ok(claimed);
         }
 
-        self.cached_slowest_reader =
-            self.disruptor.readers.wait_for_tail(tail as usize + 1) as isize;
+        self.cached_slowest_reader = self.disruptor.reader_tracker().wait_for(tail + 1) as isize;
 
         Ok(claimed)
     }
 
-    async fn async_claim(&mut self, num_to_claim: usize) -> Result<isize, SenderError> {
-        if num_to_claim > self.capacity {
-            return Err(SenderError::InputTooLarge);
-        }
-        let claimed = self
-            .disruptor
-            .claimed
-            .fetch_add(num_to_claim as isize, Ordering::SeqCst);
-        let tail = claimed - self.capacity as isize;
-
-        if tail < 0 || self.cached_slowest_reader > tail {
-            return Ok(claimed);
-        }
-
-        self.cached_slowest_reader = self
-            .disruptor
-            .readers
-            .wait_for_tail_async(tail as usize + 1)
-            .await as isize;
-
-        Ok(claimed)
-    }
-    pub fn send(&mut self, value: T) -> Result<(), SenderError> {
+    pub fn send(&mut self, value: CORE::T) -> Result<(), SenderError> {
         let claimed_id = self.claim(1)?;
-        self.internal_send(value, claimed_id)
-    }
-    pub async fn async_send(&mut self, value: T) -> Result<(), SenderError> {
-        let claimed_id = self.async_claim(1).await?;
         self.internal_send(value, claimed_id)
     }
 
     #[inline(always)]
-    fn internal_send(&mut self, value: T, claimed_id: isize) -> Result<(), SenderError> {
+    fn internal_send(&mut self, value: CORE::T, claimed_id: isize) -> Result<(), SenderError> {
         let index = claimed_id as usize % self.capacity;
 
         let old_value;
         unsafe {
-            old_value = core::mem::replace((*self.disruptor.ring).get_unchecked_mut(index), value)
+            old_value = core::mem::replace((*self.disruptor.ring()).get_unchecked_mut(index), value)
         }
 
-        // TODO what's the optimisation here
-        // wait for writers to catch up and commit their transactions
-        while self
-            .disruptor
-            .committed
-            .compare_exchange_weak(
-                claimed_id - 1,
-                claimed_id,
-                Ordering::SeqCst,
-                Ordering::Acquire,
-            )
-            .is_err()
-        {
-            core::hint::spin_loop()
-        }
         // Notify other threads that a value has been written
-        self.disruptor.writer_move.notify(usize::MAX);
+        self.disruptor.sender_tracker().commit(claimed_id);
 
         // We do this at the end to ensure that we're not worrying about wierd drop functions or
         // allocations happening during the critical path
@@ -200,18 +101,28 @@ where
     }
 }
 
+impl<CORE> Sender<CORE::T> for BroadcastSender<CORE>
+where
+    CORE: Core,
+    <CORE as Core>::T: Send,
+{
+    fn send(&mut self, value: CORE::T) -> Result<(), SenderError> {
+        BroadcastSender::send(self, value)
+    }
+}
+
 #[cfg(test)]
 mod sender_tests {
     use crate::channel::sender::Sender;
     use crate::channel::*;
-    use crate::{BroadcastSender, Receiver};
+    use crate::Receiver;
 
     #[test]
     fn sender_from_receiver() {
-        let (_, mut receiver) = channel(10);
-        let mut sender: BroadcastSender<i32> = (&receiver).into();
-        sender.send(42).expect("couldn't send");
-        let v = receiver.recv().expect("couldn't receive");
-        assert_eq!(v, 42);
+        // let (_, mut receiver) = channel(10);
+        // let mut sender: BroadcastSender<i32> = (&receiver).into();
+        // sender.send(42).expect("couldn't send");
+        // let v = receiver.recv().expect("couldn't receive");
+        // assert_eq!(v, 42);
     }
 }

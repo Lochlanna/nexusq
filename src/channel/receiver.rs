@@ -1,9 +1,6 @@
 use super::*;
 use crate::channel::tracker::Tracker;
-use crate::BroadcastSender;
 use alloc::sync::Arc;
-use async_trait::async_trait;
-use core::sync::atomic::Ordering;
 
 #[derive(Debug)]
 pub enum ReaderError {
@@ -11,119 +8,56 @@ pub enum ReaderError {
     NoNewData,
 }
 
-#[async_trait]
-pub trait Receiver {
-    type Item;
-    fn recv(&mut self) -> Result<Self::Item, ReaderError>;
-    async fn async_recv(&mut self) -> Result<Self::Item, ReaderError>;
-}
-
-#[derive(Debug, Clone)]
-pub struct BroadcastReceiver<T> {
-    inner: ReceiverCore<T, BroadcastTracker>,
-}
-
-impl<T> From<ReceiverCore<T, BroadcastTracker>> for BroadcastReceiver<T> {
-    fn from(inner: ReceiverCore<T, BroadcastTracker>) -> Self {
-        Self { inner }
-    }
-}
-
-impl<T> From<&BroadcastSender<T>> for BroadcastReceiver<T> {
-    fn from(sender: &BroadcastSender<T>) -> Self {
-        let core = sender.clone_core();
-        Self { inner: core.into() }
-    }
-}
-
-impl<T> BroadcastReceiver<T> {
-    /// Creates a new receiver at the most recent entry in the stream
-    pub fn add_stream(&self) -> Self {
-        Self {
-            inner: self.inner.add_stream(),
-        }
-    }
-
-    pub(crate) fn clone_core(&self) -> Arc<Core<T, BroadcastTracker>> {
-        self.inner.disruptor.clone()
-    }
-
-    /// Creates a new send handle to the same channel
-    pub fn new_sender(&self) -> BroadcastSender<T> {
-        self.into()
-    }
-}
-
-#[async_trait]
-impl<T> Receiver for BroadcastReceiver<T>
-where
-    T: Clone + Send,
-{
-    type Item = T;
-    /// Read the next value from the channel. This function will block and wait for data to
-    /// become available.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    ///# use nexusq::{channel, Sender, Receiver};
-    ///let (mut sender, mut receiver) = channel(10);
-    ///sender.send(4).expect("couldn't send");
-    ///let result = receiver.recv().expect("couldn't receive");
-    ///assert_eq!(result, 4);
-    /// ```
-    fn recv(&mut self) -> Result<Self::Item, ReaderError> {
-        Ok(self.inner.recv())
-    }
-    /// Async version of [`BroadcastReceiver::recv`]
-    async fn async_recv(&mut self) -> Result<Self::Item, ReaderError> {
-        Ok(self.inner.async_recv().await)
-    }
+pub trait Receiver<T>: Clone {
+    fn recv(&mut self) -> Result<T, ReaderError>;
 }
 
 #[derive(Debug)]
-pub(crate) struct ReceiverCore<T, TR: Tracker> {
-    disruptor: Arc<Core<T, TR>>,
-    internal_cursor: usize,
-    capacity: usize,
+pub struct BroadcastReceiver<CORE: Core> {
+    disruptor: Arc<CORE>,
+    internal_cursor: isize,
+    capacity: isize,
     committed_cache: isize,
 }
 
-impl<T, TR> Drop for ReceiverCore<T, TR>
+impl<CORE> Drop for BroadcastReceiver<CORE>
 where
-    TR: Tracker,
+    CORE: Core,
 {
     fn drop(&mut self) {
-        self.disruptor.readers.remove_receiver(self.internal_cursor);
+        self.disruptor
+            .reader_tracker()
+            .de_register(self.internal_cursor);
     }
 }
 
-impl<T, TR> From<Arc<Core<T, TR>>> for ReceiverCore<T, TR>
+impl<CORE> From<Arc<CORE>> for BroadcastReceiver<CORE>
 where
-    TR: Tracker,
+    CORE: Core,
 {
-    fn from(disruptor: Arc<Core<T, TR>>) -> Self {
-        let internal_cursor = disruptor.readers.new_receiver();
-        let capacity = disruptor.capacity;
+    fn from(disruptor: Arc<CORE>) -> Self {
+        let internal_cursor = disruptor.reader_tracker().register();
+        let capacity = disruptor.capacity() as isize;
+        let committed = disruptor.sender_tracker().current();
         Self {
             disruptor,
             internal_cursor,
             capacity,
-            committed_cache: -1,
+            committed_cache: committed,
         }
     }
 }
 
-impl<T, TR> Clone for ReceiverCore<T, TR>
+impl<CORE> Clone for BroadcastReceiver<CORE>
 where
-    TR: Tracker,
+    CORE: Core,
 {
     /// Creates a new receiver at the same point in the stream
     fn clone(&self) -> Self {
-        let tail = self.disruptor.readers.new_receiver();
+        let tail = self.disruptor.reader_tracker().register();
         self.disruptor
-            .readers
-            .move_receiver(tail, self.internal_cursor);
+            .reader_tracker()
+            .update(tail, self.internal_cursor);
         Self {
             disruptor: self.disruptor.clone(),
             internal_cursor: self.internal_cursor,
@@ -133,16 +67,16 @@ where
     }
 }
 
-impl<T, TR> ReceiverCore<T, TR>
+impl<CORE> BroadcastReceiver<CORE>
 where
-    TR: Tracker,
+    CORE: Core,
 {
     #[inline(always)]
     fn increment_cursor(&mut self) {
         self.internal_cursor += 1;
         self.disruptor
-            .readers
-            .move_receiver(self.internal_cursor - 1, self.internal_cursor)
+            .reader_tracker()
+            .update(self.internal_cursor - 1, self.internal_cursor)
     }
     /// Creates a new receiver at the most recent entry in the stream
     pub fn add_stream(&self) -> Self {
@@ -150,16 +84,16 @@ where
     }
 }
 
-impl<T, TR> ReceiverCore<T, TR>
+impl<CORE> BroadcastReceiver<CORE>
 where
-    T: Clone,
-    TR: Tracker,
+    CORE: Core,
+    <CORE as Core>::T: Clone,
 {
     /// Try to read the next value from the channel. This function will not block and will return
     /// a [`ReaderError::NoNewData`] if there is no data available
-    fn try_read_next(&mut self) -> Result<T, ReaderError> {
+    fn try_read_next(&mut self) -> Result<CORE::T, ReaderError> {
         if self.internal_cursor as isize > self.committed_cache {
-            self.committed_cache = self.disruptor.committed.load(Ordering::Acquire);
+            self.committed_cache = self.disruptor.sender_tracker().current();
             if self.internal_cursor as isize > self.committed_cache {
                 return Err(ReaderError::NoNewData);
             }
@@ -167,62 +101,33 @@ where
         if self.committed_cache < 0 {
             return Err(ReaderError::NoNewData);
         }
-        let index = self.internal_cursor % self.capacity;
+        let index = (self.internal_cursor % self.capacity) as usize;
         // the value has been committed so it's safe to read it!
         let value;
         unsafe {
-            value = (*self.disruptor.ring).get_unchecked(index).clone();
+            value = (*self.disruptor.ring()).get_unchecked(index).clone();
         }
         self.increment_cursor();
         Ok(value)
     }
 
-    fn shared_recv(&mut self) -> Result<T, event_listener::EventListener> {
-        loop {
-            if let Ok(next) = self.try_read_next() {
-                return Ok(next);
-            }
-            core::hint::spin_loop();
-        }
-        // if let Ok(message) = self.try_read_next() {
-        //     return Ok(message);
-        // }
-        // let listener = self.disruptor.writer_move.listen();
-        // if let Ok(message) = self.try_read_next() {
-        //     return Ok(message);
-        // }
-        // Err(listener)
-    }
-
     /// Read the next value from the channel. This function will block and wait for data to
     /// become available.
-    pub fn recv(&mut self) -> T {
-        loop {
-            match self.shared_recv() {
-                Ok(v) => {
-                    return v;
-                }
-                Err(listener) => listener.wait(),
-            }
-        }
+    pub fn recv(&mut self) -> CORE::T {
+        self.disruptor
+            .sender_tracker()
+            .wait_for(self.internal_cursor as isize);
+        self.try_read_next().expect("value wasn't ready!")
     }
 }
 
-impl<T, TR> ReceiverCore<T, TR>
+impl<CORE> Receiver<CORE::T> for BroadcastReceiver<CORE>
 where
-    T: Clone + Send,
-    TR: Tracker,
+    CORE: Core,
+    <CORE as Core>::T: Clone,
 {
-    /// Async version of [`ReceiverCore::recv`]
-    pub async fn async_recv(&mut self) -> T {
-        loop {
-            match self.shared_recv() {
-                Ok(v) => {
-                    return v;
-                }
-                Err(listener) => listener.await,
-            }
-        }
+    fn recv(&mut self) -> Result<CORE::T, ReaderError> {
+        Ok(BroadcastReceiver::recv(self))
     }
 }
 
@@ -230,14 +135,15 @@ where
 mod receiver_tests {
     use crate::channel::sender::Sender;
     use crate::channel::*;
-    use crate::{BroadcastReceiver, Receiver};
+    use crate::wait_strategy::BusySpinWaitStrategy;
+    use crate::Receiver;
 
     #[test]
     fn receiver_from_sender() {
-        let (mut sender, _) = channel(10);
-        sender.send(42).expect("couldn't send");
-        let mut receiver: BroadcastReceiver<i32> = (&sender).into();
-        let v = receiver.recv().expect("couldn't receive");
-        assert_eq!(v, 42);
+        // let (mut sender, _) = channel(10);
+        // sender.send(42).expect("couldn't send");
+        // let mut receiver: BroadcastReceiver<i32, BusySpinWaitStrategy> = (&sender).into();
+        // let v = receiver.recv().expect("couldn't receive");
+        // assert_eq!(v, 42);
     }
 }

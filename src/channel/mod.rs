@@ -2,31 +2,40 @@ pub mod receiver;
 pub mod sender;
 pub mod tracker;
 
-use crate::channel::tracker::Tracker;
+use crate::channel::tracker::{
+    ProducerTracker, ReceiverTracker, SequentialProducerTracker, Tracker,
+};
+use crate::wait_strategy::{BusySpinWaitStrategy, WaitStrategy};
+use crate::{BroadcastReceiver, BroadcastSender};
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::sync::atomic::AtomicIsize;
-use crossbeam_utils::CachePadded;
-use event_listener::Event;
-use tracker::broadcast_tracker::BroadcastTracker;
+use tracker::broadcast_tracker::MultiCursorTracker;
 
-#[derive(Debug)]
-pub(crate) struct Core<T, TR> {
-    ring: *mut Vec<T>,
-    capacity: usize,
-    claimed: CachePadded<AtomicIsize>,
-    committed: CachePadded<AtomicIsize>,
-    // is there a better way than events?
-    writer_move: Event,
-    // Reference to each reader to get their position. It should be sorted(how..?)
-    readers: TR,
+pub trait Core {
+    type T;
+    type SendTracker: Tracker + ProducerTracker;
+    type ReadTracker: Tracker + ReceiverTracker;
+    fn sender_tracker(&self) -> &Self::SendTracker;
+    fn reader_tracker(&self) -> &Self::ReadTracker;
+    fn ring(&self) -> *mut Vec<Self::T>;
+    fn capacity(&self) -> usize;
 }
 
-unsafe impl<T, TR> Send for Core<T, TR> {}
-unsafe impl<T, TR> Sync for Core<T, TR> {}
+#[derive(Debug)]
+pub struct Ring<T, WWS, RWS> {
+    ring: *mut Vec<T>,
+    capacity: usize,
+    // is there a better way than events?
+    sender_tracker: SequentialProducerTracker<WWS>,
+    // Reference to each reader to get their position. It should be sorted(how..?)
+    reader_tracker: MultiCursorTracker<RWS>,
+}
 
-impl<T, TR> Drop for Core<T, TR> {
+unsafe impl<T, WWS, RWS> Send for Ring<T, WWS, RWS> {}
+unsafe impl<T, WWS, RWS> Sync for Ring<T, WWS, RWS> {}
+
+impl<T, WWS, RWS> Drop for Ring<T, WWS, RWS> {
     fn drop(&mut self) {
         unsafe {
             drop(Box::from_raw(self.ring));
@@ -34,11 +43,16 @@ impl<T, TR> Drop for Core<T, TR> {
     }
 }
 
-impl<T, TR> Core<T, TR>
+impl<T, WWS, RWS> Ring<T, WWS, RWS>
 where
-    TR: Tracker,
+    WWS: WaitStrategy,
+    RWS: WaitStrategy,
 {
-    pub(crate) fn new(buffer_size: usize) -> Self {
+    pub(crate) fn new(
+        buffer_size: usize,
+        write_wait_strategy: WWS,
+        read_wait_strategy: RWS,
+    ) -> Self {
         let mut ring = Box::new(Vec::with_capacity(buffer_size));
         let capacity = ring.capacity();
         //TODO check that it's not bigger than isize::MAX
@@ -52,22 +66,50 @@ where
 
         Self {
             ring,
-            capacity: capacity,
-            claimed: CachePadded::new(AtomicIsize::new(0)),
-            committed: CachePadded::new(AtomicIsize::new(-1)),
-            writer_move: Default::default(),
-            readers: TR::new(capacity),
+            capacity,
+            sender_tracker: SequentialProducerTracker::new(write_wait_strategy),
+            reader_tracker: MultiCursorTracker::new(buffer_size, read_wait_strategy),
         }
     }
 }
 
+impl<T, WWS, RWS> Core for Ring<T, WWS, RWS>
+where
+    WWS: WaitStrategy,
+    RWS: WaitStrategy,
+{
+    type T = T;
+    type SendTracker = SequentialProducerTracker<WWS>;
+    type ReadTracker = MultiCursorTracker<RWS>;
+
+    fn sender_tracker(&self) -> &Self::SendTracker {
+        &self.sender_tracker
+    }
+
+    fn reader_tracker(&self) -> &Self::ReadTracker {
+        &self.reader_tracker
+    }
+
+    fn ring(&self) -> *mut Vec<Self::T> {
+        self.ring
+    }
+
+    fn capacity(&self) -> usize {
+        self.capacity
+    }
+}
+
 ///Creates a new mpmc broadcast channel returning both a sender and receiver
-pub fn channel<T>(size: usize) -> (sender::BroadcastSender<T>, receiver::BroadcastReceiver<T>) {
-    let core = Arc::new(Core::new(size));
-    let inner_sender = sender::SenderCore::from(core.clone());
-    let sender = sender::BroadcastSender::from(inner_sender);
-    let inner_receiver = receiver::ReceiverCore::from(core);
-    let receiver = receiver::BroadcastReceiver::from(inner_receiver);
+pub fn channel<T>(
+    size: usize,
+) -> (
+    BroadcastSender<Ring<T, BusySpinWaitStrategy, BusySpinWaitStrategy>>,
+    BroadcastReceiver<Ring<T, BusySpinWaitStrategy, BusySpinWaitStrategy>>,
+) {
+    let ws = BusySpinWaitStrategy::default();
+    let core = Arc::new(Ring::<T, _, _>::new(size, ws.clone(), ws));
+    let sender = sender::BroadcastSender::from(core.clone());
+    let receiver = receiver::BroadcastReceiver::from(core);
     (sender, receiver)
 }
 
@@ -80,7 +122,7 @@ mod tests {
     use std::thread::{spawn, JoinHandle};
 
     #[inline(always)]
-    fn read_n(mut receiver: receiver::BroadcastReceiver<usize>, num_to_read: usize) -> Vec<usize> {
+    fn read_n(mut receiver: impl Receiver<usize>, num_to_read: usize) -> Vec<usize> {
         let mut results = Vec::with_capacity(num_to_read);
         for _ in 0..num_to_read {
             let v = receiver.recv();
@@ -91,30 +133,9 @@ mod tests {
     }
 
     #[inline(always)]
-    async fn async_read_n(
-        mut receiver: receiver::BroadcastReceiver<usize>,
-        num_to_read: usize,
-    ) -> Vec<usize> {
-        let mut results = Vec::with_capacity(num_to_read);
-        for _ in 0..num_to_read {
-            let v = receiver.async_recv().await;
-            assert!(v.is_ok());
-            results.push(v.unwrap());
-        }
-        results
-    }
-
-    #[inline(always)]
-    fn write_n(mut sender: sender::BroadcastSender<usize>, num_to_write: usize) {
+    fn write_n(mut sender: impl Sender<usize>, num_to_write: usize) {
         for i in 0..num_to_write {
             sender.send(i).expect("couldn't send");
-        }
-    }
-
-    #[inline(always)]
-    async fn async_write_n(mut sender: sender::BroadcastSender<usize>, num_to_write: usize) {
-        for i in 0..num_to_write {
-            sender.async_send(i).await.expect("couldn't send");
         }
     }
 
@@ -155,54 +176,10 @@ mod tests {
         }
     }
 
-    #[inline(always)]
-    async fn test_async(
-        num_elements: usize,
-        num_writers: usize,
-        num_readers: usize,
-        buffer_size: usize,
-    ) {
-        let (sender, receiver) = channel(buffer_size);
-        let readers: Vec<_> = (0..num_readers)
-            .map(|_| {
-                let new_receiver = receiver.clone();
-                tokio::spawn(async_read_n(new_receiver, num_elements * num_writers))
-            })
-            .collect();
-        drop(receiver);
-        let mut senders: Vec<_> = (0..(num_writers - 1)).map(|_| sender.clone()).collect();
-        senders.push(sender);
-        let writers: Vec<_> = senders
-            .into_iter()
-            .map(|new_sender| tokio::spawn(async_write_n(new_sender, num_elements)))
-            .collect();
-
-        futures::future::join_all(writers).await;
-        for reader in readers {
-            let res = reader.await;
-            match res {
-                Ok(res) => {
-                    assert_eq!(res.len(), num_elements * num_writers);
-                    if num_writers == 1 {
-                        let expected: Vec<usize> = (0..num_elements).collect();
-                        assert_eq!(res, expected);
-                    }
-                }
-                Err(_) => panic!("reader didnt' read enough"),
-            }
-        }
-    }
-
     #[test]
     fn single_writer_single_reader() {
         let num = 5000;
         test(num, 1, 1, 10);
-    }
-
-    #[tokio::test]
-    async fn async_single_writer_single_reader() {
-        let num = 5000;
-        test_async(num, 1, 1, 10).await;
     }
 
     #[test]
@@ -211,18 +188,7 @@ mod tests {
         sender
             .send(String::from("hello world"))
             .expect("couldn't send");
-        let res = receiver.recv().expect("couldn't read");
-        assert_eq!(res, "hello world");
-    }
-
-    #[tokio::test]
-    async fn async_single_writer_single_reader_clone() {
-        let (mut sender, mut receiver) = channel(10);
-        sender
-            .async_send(String::from("hello world"))
-            .await
-            .expect("couldn't send");
-        let res = receiver.async_recv().await.expect("couldn't read");
+        let res = receiver.recv();
         assert_eq!(res, "hello world");
     }
 
@@ -232,34 +198,15 @@ mod tests {
         test(num, 1, 2, 10);
     }
 
-    #[tokio::test]
-    async fn async_single_writer_two_reader() {
-        let num = 5000;
-        test_async(num, 1, 2, 10).await;
-    }
-
     #[test]
     fn two_writer_two_reader() {
         let num = 5000;
         test(num, 2, 2, 10);
     }
 
-    #[tokio::test]
-    async fn async_one_writer_five_reader() {
+    #[test]
+    fn three_writer_three_reader() {
         let num = 5000;
-        test_async(num, 1, 5, 10).await;
-    }
-
-    #[tokio::test]
-    async fn async_two_writer_two_reader() {
-        let num = 5000;
-        test(num, 2, 2, 10);
-    }
-
-    #[tokio::test]
-    async fn async_two_writer_one_reader() {
-        console_subscriber::init();
-        let num = 10;
-        test_async(num, 1, 1, 5).await;
+        test(num, 3, 3, 10);
     }
 }

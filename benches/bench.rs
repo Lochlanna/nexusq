@@ -7,26 +7,19 @@ use nexusq::{channel, Receiver, Sender};
 use workerpool::thunk::{Thunk, ThunkWorker};
 use workerpool::Pool;
 
-trait TestReceiver: Send + 'static {
-    type Item;
-    fn test_recv(&mut self) -> Self::Item;
+trait TestReceiver<T>: Send {
+    fn test_recv(&mut self) -> T;
     fn another(&self) -> Self;
 }
 
-impl<T> TestReceiver for nexusq::BroadcastReceiver<T>
+impl<CORE> TestReceiver<CORE::T> for nexusq::BroadcastReceiver<CORE>
 where
-    T: 'static + Clone + Send,
+    CORE: nexusq::Core + Send + Sync,
+    <CORE as nexusq::Core>::T: Clone,
 {
-    type Item = T;
-
     #[inline(always)]
-    fn test_recv(&mut self) -> Self::Item {
-        loop {
-            match self.recv() {
-                Ok(v) => return v,
-                Err(_) => continue,
-            }
-        }
+    fn test_recv(&mut self) -> CORE::T {
+        self.recv()
     }
 
     fn another(&self) -> Self {
@@ -34,13 +27,12 @@ where
     }
 }
 
-impl<T> TestReceiver for multiqueue::BroadcastReceiver<T>
+impl<T> TestReceiver<T> for multiqueue::BroadcastReceiver<T>
 where
     T: 'static + Clone + Send,
 {
-    type Item = T;
     #[inline(always)]
-    fn test_recv(&mut self) -> Self::Item {
+    fn test_recv(&mut self) -> T {
         loop {
             let res = self.recv();
             match res {
@@ -55,13 +47,12 @@ where
     }
 }
 
-impl<T> TestReceiver for multiqueue2::BroadcastReceiver<T>
+impl<T> TestReceiver<T> for multiqueue2::BroadcastReceiver<T>
 where
     T: 'static + Clone + Send + Sync,
 {
-    type Item = T;
     #[inline(always)]
-    fn test_recv(&mut self) -> Self::Item {
+    fn test_recv(&mut self) -> T {
         loop {
             let res = self.recv();
             match res {
@@ -76,16 +67,17 @@ where
     }
 }
 
-trait TestSender<T>: Send + 'static {
+trait TestSender<T>: Send {
     fn test_send(&mut self, value: T);
     fn another(&self) -> Self;
 }
 
-impl<T> TestSender<T> for nexusq::BroadcastSender<T>
+impl<CORE> TestSender<CORE::T> for nexusq::BroadcastSender<CORE>
 where
-    T: 'static + Clone + Send,
+    CORE: nexusq::Core + Send + Sync,
+    <CORE as nexusq::Core>::T: Send,
 {
-    fn test_send(&mut self, value: T) {
+    fn test_send(&mut self, value: CORE::T) {
         self.send(value).expect("couldn't send");
     }
 
@@ -133,7 +125,7 @@ where
 }
 
 #[inline(always)]
-fn read_n(mut receiver: impl TestReceiver + 'static, num_to_read: usize) {
+fn read_n(mut receiver: impl TestReceiver<usize> + 'static, num_to_read: usize) {
     for _ in 0..num_to_read {
         let _ = receiver.test_recv();
     }

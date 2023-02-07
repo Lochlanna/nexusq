@@ -17,4 +17,5 @@ pub use channel::{
     channel,
     receiver::{BroadcastReceiver, ReaderError, Receiver},
     sender::{BroadcastSender, Sender, SenderError},
+    Core,
 };

@@ -1,35 +1,34 @@
 use super::Tracker;
-use alloc::boxed::Box;
+use crate::channel::tracker::ReceiverTracker;
+use crate::wait_strategy::{WaitStrategy, Waitable};
 use alloc::vec::Vec;
-use async_trait::async_trait;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicIsize;
 
 #[derive(Debug)]
-pub struct BroadcastTracker {
+pub struct MultiCursorTracker<WS> {
     // Access will always be write so no need for a more complex read write lock here.
     // It shouldn't be accessed too much and should only impede new/dying receivers not active
     // senders or receivers
     counters: Vec<AtomicUsize>,
     num_receivers: AtomicUsize,
-    tail: AtomicUsize,
-    tail_move: event_listener::Event,
+    tail: AtomicIsize,
+    wait_strategy: WS,
 }
 
-impl BroadcastTracker {
-    fn to_index(&self, v: isize) -> usize {
-        if v < 0 {
-            return 0;
-        }
-        v as usize % self.counters.len()
-    }
-
-    fn chase_tail(&self, from: usize) {
+impl<WS> MultiCursorTracker<WS>
+where
+    WS: WaitStrategy,
+{
+    fn chase_tail(&self, from: isize) {
         let mut id = from;
         loop {
             //TODO maybe there is an optimisation here...
             let cell;
             unsafe {
-                cell = self.counters.get_unchecked(id % self.counters.len());
+                cell = self
+                    .counters
+                    .get_unchecked((id as usize) % self.counters.len());
             }
             if cell.load(Ordering::Acquire) > 0 {
                 if cell.fetch_add(1, Ordering::SeqCst) > 0 {
@@ -46,29 +45,9 @@ impl BroadcastTracker {
             }
             id += 1;
         }
-        self.tail_move.notify(usize::MAX);
+        self.wait_strategy.notify();
     }
-
-    fn wait_for_shared(
-        &self,
-        expected_tail: usize,
-    ) -> Result<usize, event_listener::EventListener> {
-        let mut tail = self.tail.load(Ordering::Acquire);
-        if tail >= expected_tail {
-            return Ok(tail);
-        }
-        let listener = self.tail_move.listen();
-        tail = self.tail.load(Ordering::Acquire);
-        if tail >= expected_tail {
-            return Ok(tail);
-        }
-        Err(listener)
-    }
-}
-
-#[async_trait]
-impl Tracker for BroadcastTracker {
-    fn new(mut size: usize) -> Self {
+    pub fn new(mut size: usize, wait_strategy: WS) -> Self {
         size += 1;
         let mut counters = Vec::new();
         counters.resize_with(size, Default::default);
@@ -76,14 +55,19 @@ impl Tracker for BroadcastTracker {
             counters,
             num_receivers: Default::default(),
             tail: Default::default(),
-            tail_move: Default::default(),
+            wait_strategy,
         }
     }
+}
 
-    fn new_receiver(&self) -> usize {
+impl<WS> ReceiverTracker for MultiCursorTracker<WS>
+where
+    WS: WaitStrategy,
+{
+    fn register(&self) -> isize {
         self.num_receivers.fetch_add(1, Ordering::SeqCst);
         let tail_pos = self.tail.load(Ordering::Acquire);
-        let index = tail_pos % self.counters.len();
+        let index = (tail_pos as usize) % self.counters.len();
         //TODO there is a race condition here!
         unsafe {
             self.counters
@@ -93,12 +77,15 @@ impl Tracker for BroadcastTracker {
         tail_pos
     }
 
-    fn move_receiver(&self, from: usize, to: usize) {
+    fn update(&self, from: isize, to: isize) {
+        if from < 0 || to < 0 {
+            panic!("broadcast tracker only works with positive values")
+        }
         if to == from {
             return;
         }
-        let from_idx = from % self.counters.len();
-        let to_idx = to % self.counters.len();
+        let from_idx = (from as usize) % self.counters.len();
+        let to_idx = (to as usize) % self.counters.len();
         let to_cell;
         let from_cell;
 
@@ -117,12 +104,12 @@ impl Tracker for BroadcastTracker {
                 .compare_exchange(from, to, Ordering::SeqCst, Ordering::Acquire)
                 .is_ok()
         {
-            self.tail_move.notify(usize::MAX);
+            self.wait_strategy.notify();
         }
     }
 
-    fn remove_receiver(&self, at: usize) {
-        let index = at % self.counters.len();
+    fn de_register(&self, at: isize) {
+        let index = (at as usize) % self.counters.len();
         let previous;
         unsafe {
             previous = self
@@ -139,41 +126,26 @@ impl Tracker for BroadcastTracker {
             // self.chase_tail(at);
         }
     }
+}
+impl<WS> Tracker for MultiCursorTracker<WS>
+where
+    WS: WaitStrategy,
+{
+    fn wait_for(&self, expected_tail: isize) -> isize {
+        self.wait_strategy.wait_for(&self.tail, expected_tail)
+    }
 
-    fn slowest(&self) -> usize {
+    fn current(&self) -> isize {
         self.tail.load(Ordering::Acquire)
-    }
-
-    fn wait_for_tail(&self, expected_tail: usize) -> usize {
-        loop {
-            let tail = self.tail.load(Ordering::Acquire);
-            if tail >= expected_tail {
-                return tail;
-            }
-            core::hint::spin_loop();
-        }
-        // loop {
-        //     match self.wait_for_shared(expected_tail) {
-        //         Ok(tail) => return tail,
-        //         Err(listener) => listener.wait(),
-        //     }
-        // }
-    }
-
-    async fn wait_for_tail_async(&self, expected_tail: usize) -> usize {
-        loop {
-            match self.wait_for_shared(expected_tail) {
-                Ok(tail) => return tail,
-                Err(listener) => listener.await,
-            }
-        }
     }
 }
 
 #[cfg(test)]
 mod tracker_tests {
     use super::*;
+    use crate::wait_strategy::BusySpinWaitStrategy;
     use std::thread;
+    use std::thread::current;
     use std::time::Duration;
 
     // #[test]
@@ -203,19 +175,19 @@ mod tracker_tests {
 
     #[test]
     fn wait_for_tail() {
-        let tracker = BroadcastTracker::new(10);
-        let shared_cursor_a = tracker.new_receiver();
-        tracker.move_receiver(shared_cursor_a, 4);
+        let tracker = MultiCursorTracker::new(10, BusySpinWaitStrategy::default());
+        let shared_cursor_a = tracker.register();
+        tracker.update(shared_cursor_a, 4);
 
         thread::scope(|s| {
             let th = s.spawn(|| {
-                assert_eq!(tracker.slowest(), 4);
-                tracker.wait_for_tail(9);
-                assert_eq!(tracker.slowest(), 9);
+                assert_eq!(tracker.current(), 4);
+                tracker.wait_for(9);
+                assert_eq!(tracker.current(), 9);
             });
             thread::sleep(Duration::from_millis(50));
             for i in 5..10 {
-                tracker.move_receiver(i - 1, i);
+                tracker.update(i - 1, i);
                 thread::sleep(Duration::from_millis(10));
             }
             th.join().expect("couldn't join");
