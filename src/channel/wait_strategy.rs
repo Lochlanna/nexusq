@@ -57,6 +57,7 @@ impl Waitable for &AtomicUsize {
 
 pub trait WaitStrategy {
     fn wait_for<V: Waitable>(&self, value: V, expected: V::InnerType) -> V::InnerType;
+    #[inline(always)]
     fn notify(&self) {}
 }
 
@@ -174,13 +175,11 @@ impl Clone for BlockWait {
 
 impl Default for BlockWait {
     fn default() -> Self {
-        Self::new(Self::DEFAULT_NUM_SPINS, Self::DEFAULT_NUM_YIELD)
+        Self::new(50, 50)
     }
 }
 
 impl BlockWait {
-    const DEFAULT_NUM_YIELD: u32 = 50;
-    const DEFAULT_NUM_SPINS: u32 = 50;
     pub fn new(num_spin: u32, num_yield: u32) -> Self {
         Self {
             lock: parking_lot::Mutex::default(),
@@ -206,18 +205,17 @@ impl WaitStrategy for BlockWait {
             std::thread::yield_now();
         }
         loop {
-            {
-                let mut lock = self.lock.lock();
-                if let Some(result) = value.greater_than_equal_to(&expected) {
-                    return result;
-                }
-                self.con.wait(&mut lock);
-            }
             if let Some(result) = value.greater_than_equal_to(&expected) {
                 return result;
             }
+            let mut lock = self.lock.lock();
+            if let Some(result) = value.greater_than_equal_to(&expected) {
+                return result;
+            }
+            self.con.wait(&mut lock);
         }
     }
+    #[inline(always)]
     fn notify(&self) {
         let _lock = self.lock.lock();
         self.con.notify_all();

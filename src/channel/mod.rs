@@ -6,7 +6,7 @@ pub mod wait_strategy;
 use crate::channel::tracker::{
     ProducerTracker, ReceiverTracker, SequentialProducerTracker, Tracker,
 };
-use crate::channel::wait_strategy::BlockWait;
+use crate::channel::wait_strategy::{BlockWait, BusyWait};
 use crate::{BroadcastReceiver, BroadcastSender};
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -137,6 +137,15 @@ pub fn channel<T>(
     channel_with(size, BlockWait::default(), BlockWait::default())
 }
 
+pub fn busy_channel<T>(
+    size: usize,
+) -> (
+    BroadcastSender<Ring<T, BusyWait, BusyWait>>,
+    BroadcastReceiver<Ring<T, BusyWait, BusyWait>>,
+) {
+    channel_with(size, Default::default(), Default::default())
+}
+
 pub fn channel_with<T, WTWS, RTWS>(
     size: usize,
     write_tracker_wait_strategy: WTWS,
@@ -164,7 +173,6 @@ mod tests {
     use super::*;
     use crate::channel::sender::Sender;
     use crate::Receiver;
-    use std::prelude::v1::String;
     use std::thread::{spawn, JoinHandle};
 
     #[inline(always)]

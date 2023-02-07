@@ -13,8 +13,9 @@ mod bench_test;
 mod channel;
 
 pub use channel::{
-    channel, channel_with,
+    busy_channel, channel, channel_with,
     receiver::{BroadcastReceiver, ReaderError, Receiver},
     sender::{BroadcastSender, Sender, SenderError},
+    wait_strategy::*,
     Core,
 };

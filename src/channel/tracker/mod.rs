@@ -1,7 +1,7 @@
 pub mod broadcast_tracker;
 
 use crate::channel::wait_strategy::WaitStrategy;
-use std::sync::atomic::{AtomicIsize, Ordering};
+use core::sync::atomic::{AtomicIsize, Ordering};
 
 pub trait ReceiverTracker {
     fn register(&self) -> isize;
