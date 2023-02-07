@@ -7,12 +7,13 @@ use core::mem::forget;
 pub enum SenderError {
     /// The given input is too large to fit in the buffered channel
     InputTooLarge,
+    ChannelFull,
 }
 
 pub trait Sender<T: Send>: Clone {
     /// Send a single value to the channel. This function will block if there is no space
     /// available in the channel.
-    fn send(&mut self, value: T) -> Result<(), SenderError>;
+    fn send(&mut self, value: T);
 }
 
 #[derive(Debug)]
@@ -78,13 +79,13 @@ where
         Ok(claimed)
     }
 
-    pub fn send(&mut self, value: CORE::T) -> Result<(), SenderError> {
-        let claimed_id = self.claim(1)?;
+    pub fn send(&mut self, value: CORE::T) {
+        let claimed_id = self.claim(1).expect("this should never fail");
         self.internal_send(value, claimed_id)
     }
 
     #[inline(always)]
-    fn internal_send(&mut self, value: CORE::T, claimed_id: isize) -> Result<(), SenderError> {
+    fn internal_send(&mut self, value: CORE::T, claimed_id: isize) {
         debug_assert!(claimed_id >= 0);
         let index = claimed_id.fmod(self.capacity) as usize;
 
@@ -103,7 +104,6 @@ where
         } else {
             drop(old_value);
         }
-        Ok(())
     }
 
     pub(crate) fn get_core(&self) -> Arc<CORE> {
@@ -116,7 +116,7 @@ where
     CORE: Core,
     <CORE as Core>::T: Send,
 {
-    fn send(&mut self, value: CORE::T) -> Result<(), SenderError> {
+    fn send(&mut self, value: CORE::T) {
         BroadcastSender::send(self, value)
     }
 }
@@ -129,7 +129,7 @@ mod sender_tests {
     fn sender_from_receiver() {
         let (_, mut receiver) = channel(10);
         let mut sender: BroadcastSender<Ring<i32, BlockWait, BlockWait>> = receiver.clone().into();
-        sender.send(42).expect("couldn't send");
+        sender.send(42);
         let v = receiver.recv();
         assert_eq!(v, 42);
     }

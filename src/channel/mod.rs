@@ -23,7 +23,7 @@ impl FastMod for isize {
         debug_assert!(*self >= 0);
         debug_assert!(denominator.is_positive());
         // is pow 2 https://graphics.stanford.edu/~seander/bithacks.html#DetermineIfPowerOf2
-        debug_assert!((denominator & (denominator - 1)) == 0);
+        debug_assert!((denominator as usize).is_power_of_two());
         *self & (denominator - 1)
     }
 }
@@ -32,7 +32,7 @@ impl FastMod for usize {
     #[inline(always)]
     fn fmod(&self, denominator: Self) -> Self {
         // is pow 2 https://graphics.stanford.edu/~seander/bithacks.html#DetermineIfPowerOf2
-        debug_assert!((denominator & (denominator - 1)) == 0);
+        debug_assert!(self.is_power_of_two());
         *self & (denominator - 1)
     }
 }
@@ -181,7 +181,7 @@ mod tests {
     #[inline(always)]
     fn write_n(mut sender: impl Sender<usize>, num_to_write: usize) {
         for i in 0..num_to_write {
-            sender.send(i).expect("couldn't send");
+            sender.send(i);
         }
     }
 
@@ -231,9 +231,7 @@ mod tests {
     #[test]
     fn single_writer_single_reader_clone() {
         let (mut sender, mut receiver) = channel(10);
-        sender
-            .send(String::from("hello world"))
-            .expect("couldn't send");
+        sender.send(String::from("hello world"));
         let res = receiver.recv();
         assert_eq!(res, "hello world");
     }

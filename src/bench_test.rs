@@ -44,7 +44,7 @@ where
     X: Sender<usize> + Send + 'static,
 {
     fn test_send(&mut self, value: usize) {
-        self.send(value).expect("couldn't send");
+        self.send(value);
     }
 
     fn another(&self) -> Self {
