@@ -18,7 +18,7 @@ exclude = ["/.*"]
 no-std = []
 
 [dependencies]
-parking_lot = "0.12.1"
+event-listener = "2.5.3"
 
 [dev-dependencies]
 criterion = { version = "0.4", features = ["async_tokio"]}

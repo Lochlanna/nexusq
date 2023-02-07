@@ -161,8 +161,7 @@ impl WaitStrategy for SleepWait {
 
 #[derive(Debug)]
 pub struct BlockWait {
-    lock: parking_lot::Mutex<()>,
-    con: parking_lot::Condvar,
+    event: event_listener::Event,
     num_spin: u32,
     num_yield: u32,
 }
@@ -182,8 +181,7 @@ impl Default for BlockWait {
 impl BlockWait {
     pub fn new(num_spin: u32, num_yield: u32) -> Self {
         Self {
-            lock: parking_lot::Mutex::default(),
-            con: parking_lot::Condvar::default(),
+            event: Default::default(),
             num_spin,
             num_yield,
         }
@@ -208,16 +206,15 @@ impl WaitStrategy for BlockWait {
             if let Some(result) = value.greater_than_equal_to(&expected) {
                 return result;
             }
-            let mut lock = self.lock.lock();
+            let listener = self.event.listen();
             if let Some(result) = value.greater_than_equal_to(&expected) {
                 return result;
             }
-            self.con.wait(&mut lock);
+            listener.wait();
         }
     }
     #[inline(always)]
     fn notify(&self) {
-        let _lock = self.lock.lock();
-        self.con.notify_all();
+        self.event.notify(usize::MAX);
     }
 }
