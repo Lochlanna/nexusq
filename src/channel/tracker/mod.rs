@@ -63,9 +63,13 @@ where
 
     fn commit(&self, id: isize) {
         let expected = id - 1;
-        self.wait_strategy.wait_for(&self.committed, expected);
-        debug_assert!(self.committed.load(Ordering::Acquire) == expected);
-        self.committed.store(id, Ordering::Release);
+        while self
+            .committed
+            .compare_exchange_weak(expected, id, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            core::hint::spin_loop();
+        }
         self.wait_strategy.notify();
     }
 }
