@@ -34,6 +34,17 @@ lto=true
 codegen-units=1
 incremental=false
 
+[profile.test]
+opt-level = 0
+debug = true
+debug-assertions = false
+overflow-checks = false
+lto = false
+panic = 'unwind'
+incremental = true
+codegen-units = 256
+rpath = false
+
 
 
 [[bench]]

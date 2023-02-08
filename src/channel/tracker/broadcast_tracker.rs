@@ -90,16 +90,17 @@ where
         }
         let from_idx = (from as usize).fmod(self.counters.len());
         let to_idx = (to as usize).fmod(self.counters.len());
-        let to_cell;
-        let from_cell;
 
+        let previous;
         unsafe {
-            to_cell = self.counters.get_unchecked(to_idx);
-            from_cell = self.counters.get_unchecked(from_idx);
+            self.counters
+                .get_unchecked(to_idx)
+                .fetch_add(1, Ordering::SeqCst);
+            previous = self
+                .counters
+                .get_unchecked(from_idx)
+                .fetch_sub(1, Ordering::SeqCst);
         }
-
-        to_cell.fetch_add(1, Ordering::SeqCst);
-        let previous = from_cell.fetch_sub(1, Ordering::SeqCst);
 
         if previous == 1
             && self
