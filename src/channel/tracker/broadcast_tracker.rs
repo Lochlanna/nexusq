@@ -105,7 +105,7 @@ where
         if previous == 1
             && self
                 .tail
-                .compare_exchange(from, to, Ordering::AcqRel, Ordering::Acquire)
+                .compare_exchange(from, to, Ordering::Relaxed, Ordering::Acquire)
                 .is_ok()
         {
             // we have moved the tail!

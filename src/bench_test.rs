@@ -1,3 +1,4 @@
+use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use crate::{Receiver, Sender};
@@ -53,26 +54,32 @@ where
 }
 
 #[inline(always)]
-fn read_n(mut receiver: impl TestReceiver + 'static, num_to_read: usize) {
-    for _ in 0..num_to_read {
-        let _ = receiver.test_recv();
+fn read_n<R>(mut receiver: R, num_to_read: usize) -> Vec<R::Item>
+where
+    R: TestReceiver + 'static,
+{
+    let mut values = Vec::with_capacity(num_to_read);
+    for i in 0..num_to_read {
+        values.push(receiver.test_recv());
     }
+    values
 }
 
 #[inline(always)]
-fn write_n(mut sender: impl TestSender<usize> + 'static, num_to_write: usize) {
+fn write_n(mut sender: impl TestSender<usize> + 'static, num_to_write: usize) -> Vec<usize> {
     for i in 0..num_to_write {
         sender.test_send(i);
     }
+    Default::default()
 }
 
 fn nexus(
     num: usize,
     writers: usize,
     readers: usize,
-    pool: &Pool<ThunkWorker<()>>,
-    tx: &std::sync::mpsc::Sender<()>,
-    rx: &mut std::sync::mpsc::Receiver<()>,
+    pool: &Pool<ThunkWorker<Vec<usize>>>,
+    tx: &std::sync::mpsc::Sender<Vec<usize>>,
+    rx: &mut std::sync::mpsc::Receiver<Vec<usize>>,
     iters: u64,
 ) -> Duration {
     let mut total_duration = Duration::new(0, 0);
@@ -88,11 +95,14 @@ fn nexus(
             pool.execute_to(tx.clone(), Thunk::of(move || read_n(r, num * writers)))
         }
         for s in senders {
-            pool.execute_to(tx.clone(), Thunk::of(move || write_n(s, num)))
+            pool.execute(Thunk::of(move || write_n(s, num)));
         }
-        let num = rx.iter().take(readers + writers).count();
+        let readers = rx.iter().take(readers);
         total_duration += start.elapsed();
-        assert_eq!(num, readers + writers);
+        for res in readers {
+            assert_eq!(res.len(), num * writers);
+            black_box(res);
+        }
     }
 
     total_duration
@@ -106,7 +116,7 @@ fn test_bench() {
     let readers = 3;
     let iterations = 100;
 
-    let pool = Pool::<ThunkWorker<()>>::new(writers + readers);
+    let pool = Pool::<ThunkWorker<Vec<usize>>>::new(writers + readers);
     let (tx, mut rx) = std::sync::mpsc::channel();
     for _ in 1..=1 {
         let duration = nexus(num, writers, readers, &pool, &tx, &mut rx, iterations);

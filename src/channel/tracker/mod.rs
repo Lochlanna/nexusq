@@ -65,7 +65,7 @@ where
         let expected = id - 1;
         while self
             .committed
-            .compare_exchange_weak(expected, id, Ordering::AcqRel, Ordering::Acquire)
+            .compare_exchange_weak(expected, id, Ordering::Relaxed, Ordering::Relaxed)
             .is_err()
         {
             core::hint::spin_loop();
