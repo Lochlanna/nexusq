@@ -10,7 +10,7 @@ impl Waitable for AtomicIsize {
     type InnerType = isize;
     #[inline(always)]
     fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
-        let value = self.load(Ordering::Relaxed);
+        let value = self.load(Ordering::Acquire);
         if value >= *expected {
             return Some(value);
         }
@@ -18,7 +18,7 @@ impl Waitable for AtomicIsize {
     }
     #[inline(always)]
     fn equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
-        let value = self.load(Ordering::Relaxed);
+        let value = self.load(Ordering::Acquire);
         if value == *expected {
             return Some(value);
         }
@@ -31,7 +31,7 @@ impl Waitable for AtomicUsize {
 
     #[inline(always)]
     fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
-        let value = self.load(Ordering::Relaxed);
+        let value = self.load(Ordering::Acquire);
         if value >= *expected {
             return Some(value);
         }
@@ -39,7 +39,7 @@ impl Waitable for AtomicUsize {
     }
     #[inline(always)]
     fn equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
-        let value = self.load(Ordering::Relaxed);
+        let value = self.load(Ordering::Acquire);
         if value == *expected {
             return Some(value);
         }
@@ -51,7 +51,7 @@ impl Waitable for &AtomicIsize {
     type InnerType = isize;
     #[inline(always)]
     fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
-        let value = self.load(Ordering::Relaxed);
+        let value = self.load(Ordering::Acquire);
         if value >= *expected {
             return Some(value);
         }
@@ -59,7 +59,7 @@ impl Waitable for &AtomicIsize {
     }
     #[inline(always)]
     fn equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
-        let value = self.load(Ordering::Relaxed);
+        let value = self.load(Ordering::Acquire);
         if value == *expected {
             return Some(value);
         }
@@ -72,7 +72,7 @@ impl Waitable for &AtomicUsize {
 
     #[inline(always)]
     fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
-        let value = self.load(Ordering::Relaxed);
+        let value = self.load(Ordering::Acquire);
         if value >= *expected {
             return Some(value);
         }
@@ -80,7 +80,7 @@ impl Waitable for &AtomicUsize {
     }
     #[inline(always)]
     fn equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
-        let value = self.load(Ordering::Relaxed);
+        let value = self.load(Ordering::Acquire);
         if value == *expected {
             return Some(value);
         }

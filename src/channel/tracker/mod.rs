@@ -4,7 +4,7 @@ use crate::channel::wait_strategy::WaitStrategy;
 use core::sync::atomic::{AtomicIsize, Ordering};
 
 pub trait ReceiverTracker {
-    fn register(&self) -> isize;
+    fn register(&self, at: isize) -> isize;
     fn update(&self, from: isize, to: isize);
     fn de_register(&self, at: isize);
 }

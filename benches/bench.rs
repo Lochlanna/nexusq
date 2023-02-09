@@ -1,4 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use futures::StreamExt;
 use std::fmt::{Display, Formatter};
 use std::sync::mpsc::TrySendError;
 use std::time::{Duration, Instant};
@@ -156,11 +157,15 @@ fn nexus(
         senders.push(sender);
 
         for r in receivers {
-            pool.execute_to(tx.clone(), Thunk::of(move || read_n(r, num * writers)))
+            pool.execute_to(tx.clone(), Thunk::of(move || read_n(r, num * writers)));
         }
+        let senders: Vec<_> = senders
+            .into_iter()
+            .map(|s| Thunk::of(move || write_n(s, num)))
+            .collect();
         let start = Instant::now();
         for s in senders {
-            pool.execute(Thunk::of(move || write_n(s, num)))
+            pool.execute(s);
         }
         let results = rx.iter().take(readers).count();
         total_duration += start.elapsed();
@@ -191,10 +196,13 @@ fn multiq(
         for r in receivers {
             pool.execute_to(tx.clone(), Thunk::of(move || read_n(r, num * writers)))
         }
-
+        let senders: Vec<_> = senders
+            .into_iter()
+            .map(|s| Thunk::of(move || write_n(s, num)))
+            .collect();
         let start = Instant::now();
         for s in senders {
-            pool.execute(Thunk::of(move || write_n(s, num)))
+            pool.execute(s)
         }
         let results = rx.iter().take(readers).count();
         total_duration += start.elapsed();
@@ -226,9 +234,13 @@ fn multiq2(
             pool.execute_to(tx.clone(), Thunk::of(move || read_n(r, num * writers)))
         }
 
+        let senders: Vec<_> = senders
+            .into_iter()
+            .map(|s| Thunk::of(move || write_n(s, num)))
+            .collect();
         let start = Instant::now();
         for s in senders {
-            pool.execute(Thunk::of(move || write_n(s, num)))
+            pool.execute(s)
         }
         let results = rx.iter().take(readers).count();
         total_duration += start.elapsed();

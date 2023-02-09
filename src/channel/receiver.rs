@@ -33,12 +33,14 @@ impl<CORE> From<Arc<CORE>> for BroadcastReceiver<CORE>
 where
     CORE: Core,
 {
-    fn from(disruptor: Arc<CORE>) -> Self {
-        let internal_cursor = disruptor.reader_tracker().register();
-        let capacity = disruptor.capacity() as isize;
-        let committed = disruptor.sender_tracker().current();
+    fn from(core: Arc<CORE>) -> Self {
+        let internal_cursor = core
+            .reader_tracker()
+            .register(core.sender_tracker().current());
+        let capacity = core.capacity() as isize;
+        let committed = core.sender_tracker().current();
         Self {
-            core: disruptor,
+            core,
             internal_cursor,
             capacity,
             committed_cache: committed,
@@ -61,7 +63,10 @@ where
 {
     /// Creates a new receiver at the same point in the stream
     fn clone(&self) -> Self {
-        let tail = self.core.reader_tracker().register();
+        let tail = self
+            .core
+            .reader_tracker()
+            .register(self.core.sender_tracker().current());
         if self.internal_cursor >= 0 {
             self.core
                 .reader_tracker()
@@ -113,7 +118,7 @@ where
         if self.committed_cache < 0 {
             return Err(ReaderError::NoNewData);
         }
-        let index = self.internal_cursor.fmod(self.capacity) as usize;
+        let index = self.internal_cursor.pow_2_mod(self.capacity) as usize;
         // the value has been committed so it's safe to read it!
         let value;
         unsafe {

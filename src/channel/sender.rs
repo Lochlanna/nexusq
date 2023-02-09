@@ -86,7 +86,7 @@ where
     #[inline(always)]
     fn internal_send(&mut self, value: CORE::T, claimed_id: isize) {
         debug_assert!(claimed_id >= 0);
-        let index = claimed_id.fmod(self.capacity) as usize;
+        let index = claimed_id.pow_2_mod(self.capacity) as usize;
 
         let old_value;
         unsafe {
