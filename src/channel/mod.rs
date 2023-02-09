@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn single_writer_single_reader() {
-        let num = 50;
+        let num = 5000;
         test(num, 1, 1, 10);
     }
 

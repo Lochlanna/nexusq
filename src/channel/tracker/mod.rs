@@ -44,7 +44,7 @@ where
     WS: WaitStrategy,
 {
     fn wait_for(&self, expected: isize) -> isize {
-        self.wait_strategy.wait_for(&self.committed, expected)
+        self.wait_strategy.wait_for_geq(&self.committed, expected)
     }
 
     fn current(&self) -> isize {

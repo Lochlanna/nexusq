@@ -70,11 +70,9 @@ where
         let claimed = self.core.sender_tracker().claim(num_to_claim);
         let tail = claimed - self.capacity;
 
-        if tail < 0 || self.cached_slowest_reader > tail {
-            return Ok(claimed);
+        if tail >= 0 {
+            self.core.reader_tracker().wait_for(tail);
         }
-
-        self.cached_slowest_reader = self.core.reader_tracker().wait_for(tail + 1);
 
         Ok(claimed)
     }

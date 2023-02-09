@@ -62,9 +62,11 @@ where
     /// Creates a new receiver at the same point in the stream
     fn clone(&self) -> Self {
         let tail = self.core.reader_tracker().register();
-        self.core
-            .reader_tracker()
-            .update(tail, self.internal_cursor);
+        if self.internal_cursor >= 0 {
+            self.core
+                .reader_tracker()
+                .update(tail, self.internal_cursor);
+        }
         Self {
             core: self.core.clone(),
             internal_cursor: self.internal_cursor,
