@@ -93,7 +93,7 @@ pub trait WaitStrategyBase: Clone {
         &self,
         value: V,
         expected: V::InnerType,
-        check: impl Fn(&V, &V::InnerType) -> Option<V::InnerType>,
+        check: fn(&V, &V::InnerType) -> Option<V::InnerType>,
     ) -> V::InnerType;
 }
 
@@ -113,11 +113,12 @@ pub trait WaitStrategy: WaitStrategyBase {
 pub struct BusyWait {}
 
 impl WaitStrategyBase for BusyWait {
+    #[inline(always)]
     fn wait<V: Waitable>(
         &self,
         value: V,
         expected: V::InnerType,
-        check: impl Fn(&V, &V::InnerType) -> Option<V::InnerType>,
+        check: fn(&V, &V::InnerType) -> Option<V::InnerType>,
     ) -> V::InnerType {
         loop {
             if let Some(result) = check(&value, &expected) {
@@ -144,11 +145,12 @@ impl YieldWait {
 }
 
 impl WaitStrategyBase for YieldWait {
+    #[inline(always)]
     fn wait<V: Waitable>(
         &self,
         value: V,
         expected: V::InnerType,
-        check: impl Fn(&V, &V::InnerType) -> Option<V::InnerType>,
+        check: fn(&V, &V::InnerType) -> Option<V::InnerType>,
     ) -> V::InnerType {
         for _ in 0..self.num_spins {
             if let Some(result) = check(&value, &expected) {
@@ -192,11 +194,12 @@ impl SleepWait {
 }
 
 impl WaitStrategyBase for SleepWait {
+    #[inline(always)]
     fn wait<V: Waitable>(
         &self,
         value: V,
         expected: V::InnerType,
-        check: impl Fn(&V, &V::InnerType) -> Option<V::InnerType>,
+        check: fn(&V, &V::InnerType) -> Option<V::InnerType>,
     ) -> V::InnerType {
         for _ in 0..self.num_spin {
             if let Some(result) = check(&value, &expected) {
@@ -256,11 +259,12 @@ impl SpinBlockWait {
     }
 }
 impl WaitStrategyBase for SpinBlockWait {
+    #[inline(always)]
     fn wait<V: Waitable>(
         &self,
         value: V,
         expected: V::InnerType,
-        check: impl Fn(&V, &V::InnerType) -> Option<V::InnerType>,
+        check: fn(&V, &V::InnerType) -> Option<V::InnerType>,
     ) -> V::InnerType {
         for _ in 0..self.num_spin {
             if let Some(result) = check(&value, &expected) {
@@ -305,11 +309,12 @@ impl Clone for BlockWait {
 }
 
 impl WaitStrategyBase for BlockWait {
+    #[inline(always)]
     fn wait<V: Waitable>(
         &self,
         value: V,
         expected: V::InnerType,
-        check: impl Fn(&V, &V::InnerType) -> Option<V::InnerType>,
+        check: fn(&V, &V::InnerType) -> Option<V::InnerType>,
     ) -> V::InnerType {
         loop {
             if let Some(result) = check(&value, &expected) {

@@ -43,9 +43,7 @@ where
     }
 
     fn update(&self, from: isize, to: isize) {
-        if to.is_negative() {
-            panic!("broadcast tracker only works with positive values")
-        }
+        debug_assert!(to >= 0);
         if to == from {
             return;
         }
