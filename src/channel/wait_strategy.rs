@@ -9,7 +9,7 @@ impl Waitable for AtomicIsize {
     type InnerType = isize;
     #[inline(always)]
     fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
-        let value = self.load(Ordering::Acquire);
+        let value = self.load(Ordering::Relaxed);
         if value >= *expected {
             return Some(value);
         }
@@ -22,7 +22,7 @@ impl Waitable for AtomicUsize {
 
     #[inline(always)]
     fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
-        let value = self.load(Ordering::Acquire);
+        let value = self.load(Ordering::Relaxed);
         if value >= *expected {
             return Some(value);
         }
@@ -34,7 +34,7 @@ impl Waitable for &AtomicIsize {
     type InnerType = isize;
     #[inline(always)]
     fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
-        let value = self.load(Ordering::Acquire);
+        let value = self.load(Ordering::Relaxed);
         if value >= *expected {
             return Some(value);
         }
@@ -47,7 +47,7 @@ impl Waitable for &AtomicUsize {
 
     #[inline(always)]
     fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
-        let value = self.load(Ordering::Acquire);
+        let value = self.load(Ordering::Relaxed);
         if value >= *expected {
             return Some(value);
         }
@@ -55,7 +55,7 @@ impl Waitable for &AtomicUsize {
     }
 }
 
-pub trait WaitStrategy {
+pub trait WaitStrategy: Clone {
     fn wait_for<V: Waitable>(&self, value: V, expected: V::InnerType) -> V::InnerType;
     #[inline(always)]
     fn notify(&self) {}
@@ -160,25 +160,25 @@ impl WaitStrategy for SleepWait {
 }
 
 #[derive(Debug)]
-pub struct BlockWait {
+pub struct SpinBlockWait {
     event: event_listener::Event,
     num_spin: u32,
     num_yield: u32,
 }
 
-impl Clone for BlockWait {
+impl Clone for SpinBlockWait {
     fn clone(&self) -> Self {
         Self::new(self.num_spin, self.num_yield)
     }
 }
 
-impl Default for BlockWait {
+impl Default for SpinBlockWait {
     fn default() -> Self {
         Self::new(50, 50)
     }
 }
 
-impl BlockWait {
+impl SpinBlockWait {
     pub fn new(num_spin: u32, num_yield: u32) -> Self {
         Self {
             event: Default::default(),
@@ -188,7 +188,7 @@ impl BlockWait {
     }
 }
 
-impl WaitStrategy for BlockWait {
+impl WaitStrategy for SpinBlockWait {
     fn wait_for<V: Waitable>(&self, value: V, expected: V::InnerType) -> V::InnerType {
         for _ in 0..self.num_spin {
             if let Some(result) = value.greater_than_equal_to(&expected) {
@@ -202,6 +202,36 @@ impl WaitStrategy for BlockWait {
             }
             std::thread::yield_now();
         }
+        loop {
+            if let Some(result) = value.greater_than_equal_to(&expected) {
+                return result;
+            }
+            let listener = self.event.listen();
+            if let Some(result) = value.greater_than_equal_to(&expected) {
+                return result;
+            }
+            listener.wait();
+        }
+    }
+    #[inline(always)]
+    fn notify(&self) {
+        self.event.notify(usize::MAX);
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct BlockWait {
+    event: event_listener::Event,
+}
+
+impl Clone for BlockWait {
+    fn clone(&self) -> Self {
+        Default::default()
+    }
+}
+
+impl WaitStrategy for BlockWait {
+    fn wait_for<V: Waitable>(&self, value: V, expected: V::InnerType) -> V::InnerType {
         loop {
             if let Some(result) = value.greater_than_equal_to(&expected) {
                 return result;

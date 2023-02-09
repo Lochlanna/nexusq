@@ -3,7 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::sync::mpsc::TrySendError;
 use std::time::{Duration, Instant};
 
-use nexusq::{channel_with, BlockWait};
+use nexusq::{channel_with, BlockWait, BusyWait, SpinBlockWait};
 use workerpool::thunk::{Thunk, ThunkWorker};
 use workerpool::Pool;
 
@@ -152,21 +152,21 @@ fn nexus(
 ) -> Duration {
     let mut total_duration = Duration::new(0, 0);
     for _ in 0..iters {
-        // let (sender, receiver) = busy_channel(100);
-        let (sender, receiver) = channel_with(100, BlockWait::new(0, 0), BlockWait::new(0, 0));
+        let (sender, receiver) =
+            channel_with(10000, BlockWait::default(), SpinBlockWait::default());
         let mut receivers: Vec<_> = (0..readers - 1).map(|_| receiver.another()).collect();
         let mut senders: Vec<_> = (0..writers - 1).map(|_| sender.another()).collect();
         receivers.push(receiver);
         senders.push(sender);
 
-        let start = Instant::now();
         for r in receivers {
             pool.execute_to(tx.clone(), Thunk::of(move || read_n(r, num * writers)))
         }
+        let start = Instant::now();
         for s in senders {
             pool.execute(Thunk::of(move || write_n(s, num)))
         }
-        let results = rx.iter().take(readers);
+        let results: Vec<_> = rx.iter().take(readers).collect();
         total_duration += start.elapsed();
         for result in results {
             assert_eq!(result.len(), num * writers);
@@ -195,15 +195,15 @@ fn multiq(
         receivers.push(receiver);
         senders.push(sender);
 
-        let start = Instant::now();
         for r in receivers {
             pool.execute_to(tx.clone(), Thunk::of(move || read_n(r, num * writers)))
         }
 
+        let start = Instant::now();
         for s in senders {
             pool.execute(Thunk::of(move || write_n(s, num)))
         }
-        let results = rx.iter().take(readers);
+        let results: Vec<_> = rx.iter().take(readers).collect();
         total_duration += start.elapsed();
         for result in results {
             assert_eq!(result.len(), num * writers);
@@ -232,15 +232,15 @@ fn multiq2(
         receivers.push(receiver);
         senders.push(sender);
 
-        let start = Instant::now();
         for r in receivers {
             pool.execute_to(tx.clone(), Thunk::of(move || read_n(r, num * writers)))
         }
 
+        let start = Instant::now();
         for s in senders {
             pool.execute(Thunk::of(move || write_n(s, num)))
         }
-        let results = rx.iter().take(readers);
+        let results: Vec<_> = rx.iter().take(readers).collect();
         total_duration += start.elapsed();
         for result in results {
             assert_eq!(result.len(), num * writers);
@@ -286,9 +286,9 @@ fn throughput(c: &mut Criterion) {
                     ))
                 });
             });
-            // group.bench_with_input("multiq", &input, |b, &input| {
+            // group.bench_with_input("multiq2", &input, |b, &input| {
             //     b.iter_custom(|iters| {
-            //         black_box(multiq(
+            //         black_box(multiq2(
             //             num_elements,
             //             input.0,
             //             input.1,
@@ -299,19 +299,6 @@ fn throughput(c: &mut Criterion) {
             //         ))
             //     });
             // });
-            group.bench_with_input("multiq2", &input, |b, &input| {
-                b.iter_custom(|iters| {
-                    black_box(multiq2(
-                        num_elements,
-                        input.0,
-                        input.1,
-                        &pool,
-                        &tx,
-                        &mut rx,
-                        iters,
-                    ))
-                });
-            });
             group.finish();
         }
     }

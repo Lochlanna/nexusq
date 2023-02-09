@@ -70,13 +70,13 @@ where
     WS: WaitStrategy,
 {
     fn register(&self) -> isize {
-        self.num_receivers.fetch_add(1, Ordering::SeqCst);
-        let tail_pos = self.tail.load(Ordering::Acquire);
+        self.num_receivers.fetch_add(1, Ordering::Relaxed);
+        let tail_pos = self.tail.load(Ordering::Relaxed);
         let index = (tail_pos as usize).fmod(self.counters.len());
         //TODO there is a race condition here! The tail could move!
         unsafe {
             let cell = self.counters.get_unchecked(index);
-            cell.fetch_add(1, Ordering::SeqCst);
+            cell.fetch_add(1, Ordering::Relaxed);
         }
         tail_pos
     }
@@ -105,7 +105,7 @@ where
         if previous == 1
             && self
                 .tail
-                .compare_exchange(from, to, Ordering::Relaxed, Ordering::Acquire)
+                .compare_exchange(from, to, Ordering::Relaxed, Ordering::Relaxed)
                 .is_ok()
         {
             // we have moved the tail!
@@ -158,25 +158,25 @@ mod tracker_tests {
     fn add_remove_receiver() {
         let tracker = MultiCursorTracker::new(10, BusyWait::default());
         let shared_cursor_a = tracker.register();
-        assert_eq!(tracker.counters[0].load(Ordering::SeqCst), 1);
+        assert_eq!(tracker.counters[0].load(Ordering::Acquire), 1);
         tracker.update(shared_cursor_a, 4);
-        assert_eq!(tracker.counters[0].load(Ordering::SeqCst), 0);
-        assert_eq!(tracker.counters[4].load(Ordering::SeqCst), 1);
+        assert_eq!(tracker.counters[0].load(Ordering::Acquire), 0);
+        assert_eq!(tracker.counters[4].load(Ordering::Acquire), 1);
         assert_eq!(tracker.current(), 4);
 
         let shared_cursor_b = tracker.register();
         tracker.update(shared_cursor_b, 5);
-        assert_eq!(tracker.counters[5].load(Ordering::SeqCst), 1);
+        assert_eq!(tracker.counters[5].load(Ordering::Acquire), 1);
         assert_eq!(tracker.current(), 4);
 
         tracker.de_register(4);
-        assert_eq!(tracker.counters[4].load(Ordering::SeqCst), 0);
+        assert_eq!(tracker.counters[4].load(Ordering::Acquire), 0);
         assert_eq!(tracker.current(), 5);
 
         tracker.update(5, 7);
-        assert_eq!(tracker.counters[5].load(Ordering::SeqCst), 0);
-        assert_eq!(tracker.counters[6].load(Ordering::SeqCst), 0);
-        assert_eq!(tracker.counters[7].load(Ordering::SeqCst), 1);
+        assert_eq!(tracker.counters[5].load(Ordering::Acquire), 0);
+        assert_eq!(tracker.counters[6].load(Ordering::Acquire), 0);
+        assert_eq!(tracker.counters[7].load(Ordering::Acquire), 1);
         assert_eq!(tracker.current(), 7);
 
         tracker.de_register(7);

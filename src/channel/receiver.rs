@@ -147,7 +147,8 @@ mod receiver_tests {
     fn receiver_from_sender() {
         let (mut sender, _) = channel(10);
         sender.send(42);
-        let mut receiver: BroadcastReceiver<Ring<i32, BlockWait, BlockWait>> = sender.into();
+        let mut receiver: BroadcastReceiver<Ring<i32, SpinBlockWait, SpinBlockWait>> =
+            sender.into();
         let v = receiver.recv();
         assert_eq!(v, 42);
     }

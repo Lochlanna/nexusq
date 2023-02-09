@@ -112,7 +112,7 @@ fn nexus(
 fn test_bench() {
     let num = 50000;
     // let num = 1000;
-    let writers = 3;
+    let writers = 1;
     let readers = 3;
     let iterations = 100;
 

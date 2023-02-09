@@ -6,7 +6,7 @@ pub mod wait_strategy;
 use crate::channel::tracker::{
     ProducerTracker, ReceiverTracker, SequentialProducerTracker, Tracker,
 };
-use crate::channel::wait_strategy::{BlockWait, BusyWait};
+use crate::channel::wait_strategy::{BusyWait, SpinBlockWait};
 use crate::{BroadcastReceiver, BroadcastSender};
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -131,10 +131,10 @@ where
 pub fn channel<T>(
     size: usize,
 ) -> (
-    BroadcastSender<Ring<T, BlockWait, BlockWait>>,
-    BroadcastReceiver<Ring<T, BlockWait, BlockWait>>,
+    BroadcastSender<Ring<T, SpinBlockWait, SpinBlockWait>>,
+    BroadcastReceiver<Ring<T, SpinBlockWait, SpinBlockWait>>,
 ) {
-    channel_with(size, BlockWait::default(), BlockWait::default())
+    channel_with(size, SpinBlockWait::default(), SpinBlockWait::default())
 }
 
 pub fn busy_channel<T>(
