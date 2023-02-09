@@ -12,11 +12,11 @@ pub trait ReceiverTracker {
 pub trait ProducerTracker {
     fn claim(&self, num_to_claim: usize) -> isize;
     fn commit(&self, id: isize);
+    fn current(&self) -> isize;
 }
 
 pub trait Tracker {
     fn wait_for(&self, expected: isize) -> isize;
-    fn current(&self) -> isize;
 }
 
 #[derive(Debug)]
@@ -46,10 +46,6 @@ where
     fn wait_for(&self, expected: isize) -> isize {
         self.wait_strategy.wait_for_geq(&self.committed, expected)
     }
-
-    fn current(&self) -> isize {
-        self.committed.load(Ordering::Acquire)
-    }
 }
 
 impl<WS> ProducerTracker for SequentialProducerTracker<WS>
@@ -71,5 +67,9 @@ where
             core::hint::spin_loop();
         }
         self.wait_strategy.notify();
+    }
+
+    fn current(&self) -> isize {
+        self.committed.load(Ordering::Acquire)
     }
 }

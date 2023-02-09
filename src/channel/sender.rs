@@ -39,7 +39,8 @@ where
 {
     fn from(disruptor: Arc<CORE>) -> Self {
         let capacity = disruptor.capacity() as isize;
-        let slowest = disruptor.reader_tracker().current();
+        //TODO ermmmmm
+        let slowest = 0;
         Self {
             core: disruptor,
             capacity,

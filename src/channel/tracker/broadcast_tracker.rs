@@ -36,6 +36,7 @@ where
     WS: WaitStrategy,
 {
     fn register(&self) -> isize {
+        //TODO this won't always be called at zero!
         self.num_receivers.fetch_add(1, Ordering::SeqCst);
         self.update(-1, 0);
         0
@@ -91,10 +92,6 @@ where
         }
         expected_tail
     }
-
-    fn current(&self) -> isize {
-        -1
-    }
 }
 
 #[cfg(test)]
@@ -112,44 +109,19 @@ mod tracker_tests {
         tracker.update(shared_cursor_a, 4);
         assert_eq!(tracker.counters[0].load(Ordering::Acquire), 0);
         assert_eq!(tracker.counters[4].load(Ordering::Acquire), 1);
-        assert_eq!(tracker.current(), 4);
 
         let shared_cursor_b = tracker.register();
         tracker.update(shared_cursor_b, 5);
         assert_eq!(tracker.counters[5].load(Ordering::Acquire), 1);
-        assert_eq!(tracker.current(), 4);
 
         tracker.de_register(4);
         assert_eq!(tracker.counters[4].load(Ordering::Acquire), 0);
-        assert_eq!(tracker.current(), 5);
 
         tracker.update(5, 7);
         assert_eq!(tracker.counters[5].load(Ordering::Acquire), 0);
         assert_eq!(tracker.counters[6].load(Ordering::Acquire), 0);
         assert_eq!(tracker.counters[7].load(Ordering::Acquire), 1);
-        assert_eq!(tracker.current(), 7);
 
         tracker.de_register(7);
-    }
-
-    #[test]
-    fn wait_for_tail() {
-        let tracker = MultiCursorTracker::new(10, BusyWait::default());
-        let shared_cursor_a = tracker.register();
-        tracker.update(shared_cursor_a, 4);
-
-        thread::scope(|s| {
-            let th = s.spawn(|| {
-                assert_eq!(tracker.current(), 4);
-                tracker.wait_for(9);
-                assert_eq!(tracker.current(), 9);
-            });
-            thread::sleep(Duration::from_millis(50));
-            for i in 5..10 {
-                tracker.update(i - 1, i);
-                thread::sleep(Duration::from_millis(10));
-            }
-            th.join().expect("couldn't join");
-        });
     }
 }
