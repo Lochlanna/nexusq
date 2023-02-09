@@ -88,16 +88,14 @@ impl Waitable for &AtomicUsize {
     }
 }
 
-pub trait WaitStrategyBase: Clone {
+pub trait WaitStrategy {
     fn wait<V: Waitable>(
         &self,
         value: V,
         expected: V::InnerType,
         check: fn(&V, &V::InnerType) -> Option<V::InnerType>,
     ) -> V::InnerType;
-}
 
-pub trait WaitStrategy: WaitStrategyBase {
     fn wait_for_geq<V: Waitable>(&self, value: V, expected: V::InnerType) -> V::InnerType {
         self.wait(value, expected, V::greater_than_equal_to)
     }
@@ -112,7 +110,7 @@ pub trait WaitStrategy: WaitStrategyBase {
 #[derive(Debug, Clone, Default)]
 pub struct BusyWait {}
 
-impl WaitStrategyBase for BusyWait {
+impl WaitStrategy for BusyWait {
     #[inline(always)]
     fn wait<V: Waitable>(
         &self,
@@ -129,8 +127,6 @@ impl WaitStrategyBase for BusyWait {
     }
 }
 
-impl WaitStrategy for BusyWait {}
-
 /// This is a yield loop. decently responsive.
 /// Will let other things progress but still has high cpu usage
 #[derive(Debug, Clone)]
@@ -144,7 +140,7 @@ impl YieldWait {
     }
 }
 
-impl WaitStrategyBase for YieldWait {
+impl WaitStrategy for YieldWait {
     #[inline(always)]
     fn wait<V: Waitable>(
         &self,
@@ -173,8 +169,6 @@ impl Default for YieldWait {
     }
 }
 
-impl WaitStrategy for YieldWait {}
-
 /// This is a raw spin loop. Super responsive. If you've got enough cores
 #[derive(Debug, Clone)]
 pub struct SleepWait {
@@ -193,7 +187,7 @@ impl SleepWait {
     }
 }
 
-impl WaitStrategyBase for SleepWait {
+impl WaitStrategy for SleepWait {
     #[inline(always)]
     fn wait<V: Waitable>(
         &self,
@@ -228,8 +222,6 @@ impl Default for SleepWait {
     }
 }
 
-impl WaitStrategy for SleepWait {}
-
 #[derive(Debug)]
 pub struct SpinBlockWait {
     event: event_listener::Event,
@@ -258,7 +250,7 @@ impl SpinBlockWait {
         }
     }
 }
-impl WaitStrategyBase for SpinBlockWait {
+impl WaitStrategy for SpinBlockWait {
     #[inline(always)]
     fn wait<V: Waitable>(
         &self,
@@ -289,8 +281,7 @@ impl WaitStrategyBase for SpinBlockWait {
             listener.wait();
         }
     }
-}
-impl WaitStrategy for SpinBlockWait {
+
     #[inline(always)]
     fn notify(&self) {
         self.event.notify(usize::MAX);
@@ -308,7 +299,7 @@ impl Clone for BlockWait {
     }
 }
 
-impl WaitStrategyBase for BlockWait {
+impl WaitStrategy for BlockWait {
     #[inline(always)]
     fn wait<V: Waitable>(
         &self,
@@ -327,9 +318,7 @@ impl WaitStrategyBase for BlockWait {
             listener.wait();
         }
     }
-}
 
-impl WaitStrategy for BlockWait {
     #[inline(always)]
     fn notify(&self) {
         self.event.notify(usize::MAX);
