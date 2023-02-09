@@ -125,35 +125,31 @@ where
 }
 
 #[inline(always)]
-fn read_n(mut receiver: impl TestReceiver<usize> + 'static, num_to_read: usize) -> Vec<usize> {
-    let mut res = Vec::with_capacity(num_to_read);
+fn read_n(mut receiver: impl TestReceiver<usize> + 'static, num_to_read: usize) {
     for _ in 0..num_to_read {
-        res.push(receiver.test_recv());
+        black_box(receiver.test_recv());
     }
-    res
 }
 
 #[inline(always)]
-fn write_n(mut sender: impl TestSender<usize> + 'static, num_to_write: usize) -> Vec<usize> {
+fn write_n(mut sender: impl TestSender<usize> + 'static, num_to_write: usize) {
     for i in 0..num_to_write {
         sender.test_send(i);
     }
-    Default::default()
 }
 
 fn nexus(
     num: usize,
     writers: usize,
     readers: usize,
-    pool: &Pool<ThunkWorker<Vec<usize>>>,
-    tx: &std::sync::mpsc::Sender<Vec<usize>>,
-    rx: &mut std::sync::mpsc::Receiver<Vec<usize>>,
+    pool: &Pool<ThunkWorker<()>>,
+    tx: &std::sync::mpsc::Sender<()>,
+    rx: &mut std::sync::mpsc::Receiver<()>,
     iters: u64,
 ) -> Duration {
     let mut total_duration = Duration::new(0, 0);
     for _ in 0..iters {
-        let (sender, receiver) =
-            channel_with(10000, BlockWait::default(), SpinBlockWait::default());
+        let (sender, receiver) = channel_with(100, BlockWait::default(), BlockWait::default());
         let mut receivers: Vec<_> = (0..readers - 1).map(|_| receiver.another()).collect();
         let mut senders: Vec<_> = (0..writers - 1).map(|_| sender.another()).collect();
         receivers.push(receiver);
@@ -166,12 +162,9 @@ fn nexus(
         for s in senders {
             pool.execute(Thunk::of(move || write_n(s, num)))
         }
-        let results: Vec<_> = rx.iter().take(readers).collect();
+        let results = rx.iter().take(readers).count();
         total_duration += start.elapsed();
-        for result in results {
-            assert_eq!(result.len(), num * writers);
-            black_box(result);
-        }
+        assert_eq!(results, readers);
     }
 
     total_duration
@@ -181,9 +174,9 @@ fn multiq(
     num: usize,
     writers: usize,
     readers: usize,
-    pool: &Pool<ThunkWorker<Vec<usize>>>,
-    tx: &std::sync::mpsc::Sender<Vec<usize>>,
-    rx: &mut std::sync::mpsc::Receiver<Vec<usize>>,
+    pool: &Pool<ThunkWorker<()>>,
+    tx: &std::sync::mpsc::Sender<()>,
+    rx: &mut std::sync::mpsc::Receiver<()>,
     iters: u64,
 ) -> Duration {
     let mut total_duration = Duration::new(0, 0);
@@ -203,12 +196,9 @@ fn multiq(
         for s in senders {
             pool.execute(Thunk::of(move || write_n(s, num)))
         }
-        let results: Vec<_> = rx.iter().take(readers).collect();
+        let results = rx.iter().take(readers).count();
         total_duration += start.elapsed();
-        for result in results {
-            assert_eq!(result.len(), num * writers);
-            black_box(result);
-        }
+        assert_eq!(results, readers);
     }
 
     total_duration
@@ -218,9 +208,9 @@ fn multiq2(
     num: usize,
     writers: usize,
     readers: usize,
-    pool: &Pool<ThunkWorker<Vec<usize>>>,
-    tx: &std::sync::mpsc::Sender<Vec<usize>>,
-    rx: &mut std::sync::mpsc::Receiver<Vec<usize>>,
+    pool: &Pool<ThunkWorker<()>>,
+    tx: &std::sync::mpsc::Sender<()>,
+    rx: &mut std::sync::mpsc::Receiver<()>,
     iters: u64,
 ) -> Duration {
     let mut total_duration = Duration::new(0, 0);
@@ -240,12 +230,9 @@ fn multiq2(
         for s in senders {
             pool.execute(Thunk::of(move || write_n(s, num)))
         }
-        let results: Vec<_> = rx.iter().take(readers).collect();
+        let results = rx.iter().take(readers).count();
         total_duration += start.elapsed();
-        for result in results {
-            assert_eq!(result.len(), num * writers);
-            black_box(result);
-        }
+        assert_eq!(results, readers);
     }
 
     total_duration
@@ -259,11 +246,11 @@ impl Display for RunParam {
 }
 
 fn throughput(c: &mut Criterion) {
-    let num_elements = 10000;
+    let num_elements = 20000;
     let max_writers = 2;
     let max_readers = 2;
 
-    let pool = Pool::<ThunkWorker<Vec<usize>>>::new(max_writers + max_readers);
+    let pool = Pool::<ThunkWorker<()>>::new(max_writers + max_readers);
     let (tx, mut rx) = std::sync::mpsc::channel();
 
     for num_writers in 2..=max_writers {

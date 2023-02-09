@@ -90,14 +90,14 @@ fn nexus(
         receivers.push(receiver);
         senders.push(sender);
 
-        let start = Instant::now();
         for r in receivers {
             pool.execute_to(tx.clone(), Thunk::of(move || read_n(r, num * writers)))
         }
+        let start = Instant::now();
         for s in senders {
             pool.execute(Thunk::of(move || write_n(s, num)));
         }
-        let readers = rx.iter().take(readers);
+        let readers: Vec<_> = rx.iter().take(readers).collect();
         total_duration += start.elapsed();
         for res in readers {
             assert_eq!(res.len(), num * writers);

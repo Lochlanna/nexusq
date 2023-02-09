@@ -82,19 +82,16 @@ where
             .checked_next_power_of_two()
             .expect("usize wrapped!");
         let mut ring = Box::new(Vec::with_capacity(buffer_size));
-        let capacity = ring.capacity();
         //TODO check that it's not bigger than isize::MAX
         unsafe {
-            // use capacity as vec is allowed to allocate more than buffer_size if it likes so
-            //we might as well use it!
-            ring.set_len(capacity);
+            ring.set_len(buffer_size);
         }
 
         let ring = Box::into_raw(ring);
 
         Self {
             ring,
-            capacity,
+            capacity: buffer_size,
             sender_tracker: SequentialProducerTracker::new(write_tracker_wait_strategy),
             reader_tracker: MultiCursorTracker::new(buffer_size, read_tracker_wait_strategy),
         }
