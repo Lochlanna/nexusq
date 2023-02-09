@@ -81,6 +81,7 @@ where
             .expect("usize wrapped!");
         let mut ring = Box::new(Vec::with_capacity(buffer_size));
         //TODO check that it's not bigger than isize::MAX
+        assert!(buffer_size < isize::MAX as usize);
         unsafe {
             ring.set_len(buffer_size);
         }

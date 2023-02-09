@@ -1,7 +1,7 @@
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use crate::{Receiver, Sender};
+use crate::{BlockWait, Receiver, Sender};
 use std::io::Write;
 use std::println;
 use std::vec::Vec;
@@ -84,7 +84,8 @@ fn nexus(
 ) -> Duration {
     let mut total_duration = Duration::new(0, 0);
     for _ in 0..iters {
-        let (sender, receiver) = crate::channel(100);
+        let (sender, receiver) =
+            crate::channel_with(100, BlockWait::default(), BlockWait::default());
         let mut receivers: Vec<_> = (0..readers - 1).map(|_| receiver.another()).collect();
         let mut senders: Vec<_> = (0..writers - 1).map(|_| sender.another()).collect();
         receivers.push(receiver);

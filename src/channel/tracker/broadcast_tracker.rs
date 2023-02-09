@@ -36,17 +36,21 @@ where
 {
     fn register(&self, mut at: isize) -> isize {
         at = at.clamp(0, isize::MAX);
-        let to_idx = at.pow_2_mod(self.counters.len() as isize);
-        // negative one in from does a add rather than move
-        self.update(-1, to_idx);
+        let idx = (at as usize).pow_2_mod(self.counters.len());
+        unsafe {
+            self.counters
+                .get_unchecked(idx)
+                .fetch_add(1, Ordering::Release);
+        }
+        self.wait_strategy.notify();
         at
     }
 
     fn update(&self, from: isize, to: isize) {
         debug_assert!(to >= 0);
-        if to == from {
-            return;
-        }
+        debug_assert!(from >= 0);
+        debug_assert!(from < to);
+
         let to_idx = (to as usize).pow_2_mod(self.counters.len());
         let from_idx = (from as usize).pow_2_mod(self.counters.len());
 
@@ -54,11 +58,9 @@ where
             self.counters
                 .get_unchecked(to_idx)
                 .fetch_add(1, Ordering::Release);
-            if !from.is_negative() {
-                self.counters
-                    .get_unchecked(from_idx)
-                    .fetch_sub(1, Ordering::Release);
-            }
+            self.counters
+                .get_unchecked(from_idx)
+                .fetch_sub(1, Ordering::Release);
         }
         self.wait_strategy.notify();
     }
