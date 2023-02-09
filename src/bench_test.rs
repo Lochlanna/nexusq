@@ -59,7 +59,7 @@ where
     R: TestReceiver + 'static,
 {
     let mut values = Vec::with_capacity(num_to_read);
-    for i in 0..num_to_read {
+    for _ in 0..num_to_read {
         values.push(receiver.test_recv());
     }
     values

@@ -20,7 +20,7 @@ where
 {
     pub fn new(mut size: usize, wait_strategy: WS) -> Self {
         // This is very inefficient but it's to prevent collision on wrapping
-        let size = (size + 1).next_power_of_two();
+        size = (size + 1).next_power_of_two();
         let mut counters = Vec::new();
         counters.resize_with(size, Default::default);
         Self {
@@ -97,8 +97,6 @@ where
 mod tracker_tests {
     use super::*;
     use crate::channel::wait_strategy::BusyWait;
-    use std::thread;
-    use std::time::Duration;
 
     #[test]
     fn add_remove_receiver() {

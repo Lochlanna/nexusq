@@ -34,6 +34,8 @@ where
     CORE: Core,
 {
     fn from(core: Arc<CORE>) -> Self {
+        //TODO we could have a race condition here where the writer overwrites the committed value
+        // before registration happens! Unlikely unless the size is very small and writers are very very fast
         let internal_cursor = core
             .reader_tracker()
             .register(core.sender_tracker().current());
