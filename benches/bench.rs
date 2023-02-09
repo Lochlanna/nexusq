@@ -1,10 +1,9 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use futures::StreamExt;
 use std::fmt::{Display, Formatter};
 use std::sync::mpsc::TrySendError;
 use std::time::{Duration, Instant};
 
-use nexusq::{channel_with, BlockWait, BusyWait, SpinBlockWait};
+use nexusq::{channel_with, BlockWait};
 use workerpool::thunk::{Thunk, ThunkWorker};
 use workerpool::Pool;
 
