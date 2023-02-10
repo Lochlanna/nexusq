@@ -1,6 +1,6 @@
 use super::{ProducerTracker, Tracker};
 use crate::WaitStrategy;
-use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicIsize, Ordering};
 
 #[derive(Debug)]
 pub struct SequentialProducerTracker<WS> {

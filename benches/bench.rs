@@ -1,6 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use std::fmt::{Display, Formatter};
-use std::io::Write;
 use std::sync::mpsc::TrySendError;
 use std::time::{Duration, Instant};
 
