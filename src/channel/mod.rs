@@ -261,6 +261,16 @@ mod tests {
                         let e = resmap.entry(v).or_insert(0_usize);
                         *e += 1;
                     });
+                    let mut missing = HashMap::new();
+                    for (key, value) in &expected {
+                        if let Some(val) = resmap.get(key) {
+                            if val != value {
+                                missing.insert(*key, *val);
+                            }
+                        }
+                        missing.insert(*key, 0);
+                    }
+                    println!("diff is {:?}", missing);
                     assert_eq!(resmap, expected);
                 }
                 Err(_) => panic!("reader didnt' read enough"),

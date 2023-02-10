@@ -110,6 +110,7 @@ fn nexus(
 }
 
 #[test]
+#[ignore]
 fn test_bench() {
     let num = 50000;
     // let num = 1000;

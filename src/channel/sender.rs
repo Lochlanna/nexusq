@@ -20,6 +20,7 @@ pub trait Sender<T: Send>: Clone {
 pub struct BroadcastSender<CORE> {
     core: Arc<CORE>,
     capacity: isize,
+    cached_tail: isize,
 }
 
 impl<CORE> Clone for BroadcastSender<CORE> {
@@ -27,6 +28,7 @@ impl<CORE> Clone for BroadcastSender<CORE> {
         Self {
             core: self.core.clone(),
             capacity: self.capacity,
+            cached_tail: 0,
         }
     }
 }
@@ -40,6 +42,7 @@ where
         Self {
             core: disruptor,
             capacity,
+            cached_tail: 0,
         }
     }
 }
@@ -64,11 +67,9 @@ where
         let claimed = sender_tracker.make_claim();
 
         let tail = claimed - self.capacity;
-        if tail >= 0 {
-            self.core.reader_tracker().wait_for(tail);
+        if tail >= 0 && self.cached_tail <= tail {
+            self.cached_tail = self.core.reader_tracker().wait_for(tail + 1);
         }
-
-        sender_tracker.commit_claim(claimed);
 
         claimed
     }

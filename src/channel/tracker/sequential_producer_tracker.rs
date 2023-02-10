@@ -31,6 +31,10 @@ where
     fn wait_for(&self, expected: isize) -> isize {
         self.wait_strategy.wait_for_geq(&self.published, expected)
     }
+
+    fn current(&self) -> isize {
+        self.published.load(Ordering::Acquire)
+    }
 }
 
 impl<WS> ProducerTracker for SequentialProducerTracker<WS>
@@ -38,31 +42,18 @@ where
     WS: WaitStrategy,
 {
     fn make_claim(&self) -> isize {
-        let claim = self.claimed.fetch_add(1, Ordering::Acquire);
-        let expected = claim - 1;
-        while self.committed.load(Ordering::Relaxed) != expected {
-            core::hint::spin_loop();
-        }
-        claim
-    }
-
-    fn commit_claim(&self, id: isize) {
-        self.committed.store(id, Ordering::Release);
+        self.claimed.fetch_add(1, Ordering::SeqCst)
     }
 
     fn publish(&self, id: isize) {
         let expected = id - 1;
         while self
             .published
-            .compare_exchange_weak(expected, id, Ordering::Relaxed, Ordering::Relaxed)
+            .compare_exchange_weak(expected, id, Ordering::Release, Ordering::Relaxed)
             .is_err()
         {
             core::hint::spin_loop();
         }
         self.wait_strategy.notify();
-    }
-
-    fn current(&self) -> isize {
-        self.published.load(Ordering::Acquire)
     }
 }

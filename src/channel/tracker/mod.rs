@@ -12,11 +12,10 @@ pub trait ReceiverTracker {
 
 pub trait ProducerTracker {
     fn make_claim(&self) -> isize;
-    fn commit_claim(&self, id: isize);
     fn publish(&self, id: isize);
-    fn current(&self) -> isize;
 }
 
 pub trait Tracker {
     fn wait_for(&self, expected: isize) -> isize;
+    fn current(&self) -> isize;
 }

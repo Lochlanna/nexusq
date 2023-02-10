@@ -4,6 +4,7 @@ use crate::channel::wait_strategy::WaitStrategy;
 use crate::channel::FastMod;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicIsize;
 
 #[derive(Debug)]
 pub struct MultiCursorTracker<WS> {
@@ -11,6 +12,7 @@ pub struct MultiCursorTracker<WS> {
     // It shouldn't be accessed too much and should only impede new/dying receivers not active
     // senders or receivers
     counters: Vec<AtomicUsize>,
+    tail: AtomicIsize,
     wait_strategy: WS,
 }
 
@@ -25,6 +27,7 @@ where
         counters.resize_with(size, Default::default);
         Self {
             counters,
+            tail: Default::default(),
             wait_strategy,
         }
     }
@@ -35,14 +38,14 @@ where
     WS: WaitStrategy,
 {
     fn register(&self, mut at: isize) -> isize {
+        //TODO there could be a race here if it gets overwritten
         at = at.clamp(0, isize::MAX);
         let idx = (at as usize).pow_2_mod(self.counters.len());
         unsafe {
             self.counters
                 .get_unchecked(idx)
-                .fetch_add(1, Ordering::Release);
+                .fetch_add(1, Ordering::SeqCst);
         }
-        self.wait_strategy.notify();
         at
     }
 
@@ -54,15 +57,25 @@ where
         let to_idx = (to as usize).pow_2_mod(self.counters.len());
         let from_idx = (from as usize).pow_2_mod(self.counters.len());
 
+        let previous;
         unsafe {
             self.counters
                 .get_unchecked(to_idx)
-                .fetch_add(1, Ordering::Release);
-            self.counters
+                .fetch_add(1, Ordering::SeqCst);
+            previous = self
+                .counters
                 .get_unchecked(from_idx)
-                .fetch_sub(1, Ordering::Release);
+                .fetch_sub(1, Ordering::SeqCst);
         }
-        self.wait_strategy.notify();
+        if previous == 1
+            && self
+                .tail
+                .compare_exchange(from, to, Ordering::SeqCst, Ordering::Acquire)
+                .is_ok()
+        {
+            //the tail has moved. notify anyone who was listening
+            self.wait_strategy.notify();
+        }
     }
 
     fn de_register(&self, at: isize) {
@@ -73,7 +86,7 @@ where
                 previous = self
                     .counters
                     .get_unchecked(index)
-                    .fetch_sub(1, Ordering::Release);
+                    .fetch_sub(1, Ordering::SeqCst);
             }
             debug_assert!(previous > 0);
         }
@@ -84,12 +97,11 @@ where
     WS: WaitStrategy,
 {
     fn wait_for(&self, expected_tail: isize) -> isize {
-        let index = (expected_tail as usize).pow_2_mod(self.counters.len());
-        unsafe {
-            self.wait_strategy
-                .wait_for_eq(self.counters.get_unchecked(index), 0);
-        }
-        expected_tail
+        self.wait_strategy.wait_for_geq(&self.tail, expected_tail)
+    }
+
+    fn current(&self) -> isize {
+        self.tail.load(Ordering::Acquire)
     }
 }
 
