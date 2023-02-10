@@ -169,41 +169,79 @@ mod tests {
     use super::*;
     use crate::channel::sender::Sender;
     use crate::Receiver;
+    use std::collections::HashMap;
+    use std::ops::Add;
     use std::thread::{spawn, JoinHandle};
+    use std::time::Duration;
 
     #[inline(always)]
-    fn read_n(mut receiver: impl Receiver<usize>, num_to_read: usize) -> Vec<usize> {
+    fn read_n(
+        mut receiver: impl Receiver<usize>,
+        num_to_read: usize,
+        sleep_time: Duration,
+        thread_num: usize,
+    ) -> Vec<usize> {
         let mut results = Vec::with_capacity(num_to_read);
-        for _ in 0..num_to_read {
+        let seed = 42 + thread_num;
+        let jtter_duration = sleep_time + sleep_time.div_f32(0.5);
+        for i in 0..num_to_read {
             let v = receiver.recv();
             assert!(v.is_ok());
+            if !sleep_time.is_zero() {
+                if i % seed == 0 {
+                    std::thread::sleep(jtter_duration);
+                } else {
+                    std::thread::sleep(sleep_time);
+                }
+            }
             results.push(v.unwrap());
         }
         results
     }
 
     #[inline(always)]
-    fn write_n(mut sender: impl Sender<usize>, num_to_write: usize) {
+    fn write_n(
+        mut sender: impl Sender<usize>,
+        num_to_write: usize,
+        sleep_time: Duration,
+        thread_num: usize,
+    ) {
+        let seed = 42 + thread_num;
+        let jtter_duration = sleep_time + sleep_time.div_f32(0.5);
         for i in 0..num_to_write {
             sender.send(i);
+            if !sleep_time.is_zero() {
+                if i % seed == 0 {
+                    std::thread::sleep(jtter_duration);
+                } else {
+                    std::thread::sleep(sleep_time);
+                }
+            }
         }
     }
 
     #[inline(always)]
-    fn test(num_elements: usize, num_writers: usize, num_readers: usize, buffer_size: usize) {
+    fn test(
+        num_elements: usize,
+        num_writers: usize,
+        num_readers: usize,
+        buffer_size: usize,
+        read_sleep: Duration,
+        write_sleep: Duration,
+    ) {
         let (sender, receiver) = channel(buffer_size);
         let readers: Vec<JoinHandle<Vec<usize>>> = (0..num_readers)
-            .map(|_| {
+            .map(|i| {
                 let new_receiver = receiver.clone();
-                spawn(move || read_n(new_receiver, num_elements * num_writers))
+                spawn(move || read_n(new_receiver, num_elements * num_writers, read_sleep, i))
             })
             .collect();
         drop(receiver);
         let writers: Vec<JoinHandle<()>> = (0..num_writers)
-            .map(|_| {
+            .map(|i| {
                 let new_sender = sender.clone();
                 spawn(move || {
-                    write_n(new_sender, num_elements);
+                    write_n(new_sender, num_elements, write_sleep, i);
                 })
             })
             .collect();
@@ -216,10 +254,16 @@ mod tests {
             match res {
                 Ok(res) => {
                     assert_eq!(res.len(), num_elements * num_writers);
-                    if num_writers == 1 {
-                        let expected: Vec<usize> = (0..num_elements).collect();
-                        assert_eq!(res, expected);
-                    }
+                    let mut expected = HashMap::with_capacity(num_elements);
+                    (0..num_elements).for_each(|v| {
+                        expected.insert(v, num_writers);
+                    });
+                    let mut resmap = HashMap::with_capacity(num_elements);
+                    res.into_iter().for_each(|v| {
+                        let e = resmap.entry(v).or_insert(0_usize);
+                        *e += 1;
+                    });
+                    assert_eq!(resmap, expected);
                 }
                 Err(_) => panic!("reader didnt' read enough"),
             }
@@ -228,8 +272,8 @@ mod tests {
 
     #[test]
     fn single_writer_single_reader() {
-        let num = 5000;
-        test(num, 1, 1, 10);
+        let num = 15;
+        test(num, 1, 1, 5, Default::default(), Default::default());
     }
 
     #[test]
@@ -243,18 +287,42 @@ mod tests {
     #[test]
     fn single_writer_two_reader() {
         let num = 5000;
-        test(num, 1, 2, 10);
+        test(num, 1, 2, 10, Default::default(), Default::default());
     }
 
     #[test]
     fn two_writer_two_reader() {
         let num = 5000;
-        test(num, 2, 2, 10);
+        test(num, 2, 2, 10, Default::default(), Default::default());
+    }
+
+    #[test]
+    fn two_writer_two_reader_slow_read() {
+        let num = 500;
+        test(num, 2, 2, 4, Duration::from_millis(1), Default::default());
+    }
+
+    #[test]
+    fn two_writer_two_reader_slow_write() {
+        let num = 500;
+        test(num, 2, 2, 4, Default::default(), Duration::from_millis(1));
+    }
+
+    #[test]
+    fn two_writer_two_reader_very_slow_read() {
+        let num = 100;
+        test(num, 2, 2, 4, Duration::from_millis(2), Default::default());
+    }
+
+    #[test]
+    fn two_writer_two_reader_very_slow_write() {
+        let num = 100;
+        test(num, 2, 2, 4, Default::default(), Duration::from_millis(2));
     }
 
     #[test]
     fn three_writer_three_reader() {
         let num = 5000;
-        test(num, 3, 3, 10);
+        test(num, 3, 3, 10, Default::default(), Default::default());
     }
 }
