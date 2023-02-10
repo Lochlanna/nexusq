@@ -284,19 +284,19 @@ fn throughput(c: &mut Criterion) {
                     ))
                 });
             });
-            // group.bench_with_input("multiq2", &input, |b, &input| {
-            //     b.iter_custom(|iters| {
-            //         black_box(multiq2(
-            //             num_elements,
-            //             input.0,
-            //             input.1,
-            //             &pool,
-            //             &tx,
-            //             &mut rx,
-            //             iters,
-            //         ))
-            //     });
-            // });
+            group.bench_with_input("multiq2", &input, |b, &input| {
+                b.iter_custom(|iters| {
+                    black_box(multiq2(
+                        num_elements,
+                        input.0,
+                        input.1,
+                        &pool,
+                        &tx,
+                        &mut rx,
+                        iters,
+                    ))
+                });
+            });
             group.finish();
         }
     }

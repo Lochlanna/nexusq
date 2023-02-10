@@ -1,7 +1,7 @@
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use crate::{BlockWait, Receiver, Sender};
+use crate::{BlockWait, BusyWait, Receiver, Sender, SpinBlockWait};
 use std::io::Write;
 use std::println;
 use std::vec::Vec;
@@ -85,7 +85,7 @@ fn nexus(
     let mut total_duration = Duration::new(0, 0);
     for _ in 0..iters {
         let (sender, receiver) =
-            crate::channel_with(100, BlockWait::default(), BlockWait::default());
+            crate::channel_with(100, SpinBlockWait::default(), SpinBlockWait::default());
         let mut receivers: Vec<_> = (0..readers - 1).map(|_| receiver.another()).collect();
         let mut senders: Vec<_> = (0..writers - 1).map(|_| sender.another()).collect();
         receivers.push(receiver);
@@ -113,8 +113,8 @@ fn nexus(
 fn test_bench() {
     let num = 50000;
     // let num = 1000;
-    let writers = 1;
-    let readers = 3;
+    let writers = 2;
+    let readers = 2;
     let iterations = 100;
 
     let pool = Pool::<ThunkWorker<Vec<usize>>>::new(writers + readers);

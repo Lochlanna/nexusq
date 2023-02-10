@@ -20,7 +20,6 @@ pub trait Sender<T: Send>: Clone {
 pub struct BroadcastSender<CORE> {
     core: Arc<CORE>,
     capacity: isize,
-    cached_slowest_reader: isize,
 }
 
 impl<CORE> Clone for BroadcastSender<CORE> {
@@ -28,7 +27,6 @@ impl<CORE> Clone for BroadcastSender<CORE> {
         Self {
             core: self.core.clone(),
             capacity: self.capacity,
-            cached_slowest_reader: self.cached_slowest_reader,
         }
     }
 }
@@ -39,12 +37,9 @@ where
 {
     fn from(disruptor: Arc<CORE>) -> Self {
         let capacity = disruptor.capacity() as isize;
-        //TODO ermmmmm
-        let slowest = 0;
         Self {
             core: disruptor,
             capacity,
-            cached_slowest_reader: slowest,
         }
     }
 }
@@ -63,23 +58,23 @@ where
     CORE: Core,
 {
     //TODO this can probably be cut down / optimised a bit...
-    fn claim(&mut self, num_to_claim: usize) -> Result<isize, SenderError> {
-        if num_to_claim as isize > self.capacity {
-            return Err(SenderError::InputTooLarge);
-        }
+    fn claim(&mut self) -> isize {
+        let sender_tracker = self.core.sender_tracker();
 
-        let claimed = self.core.sender_tracker().claim(num_to_claim);
+        let claimed = sender_tracker.make_claim();
+
         let tail = claimed - self.capacity;
-
         if tail >= 0 {
             self.core.reader_tracker().wait_for(tail);
         }
 
-        Ok(claimed)
+        sender_tracker.commit_claim(claimed);
+
+        claimed
     }
 
     pub fn send(&mut self, value: CORE::T) {
-        let claimed_id = self.claim(1).expect("this should never fail");
+        let claimed_id = self.claim();
         self.internal_send(value, claimed_id)
     }
 
@@ -94,7 +89,7 @@ where
         }
 
         // Notify other threads that a value has been written
-        self.core.sender_tracker().commit(claimed_id);
+        self.core.sender_tracker().publish(claimed_id);
 
         // We do this at the end to ensure that we're not worrying about wierd drop functions or
         // allocations happening during the critical path

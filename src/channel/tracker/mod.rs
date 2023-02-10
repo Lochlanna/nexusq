@@ -10,8 +10,9 @@ pub trait ReceiverTracker {
 }
 
 pub trait ProducerTracker {
-    fn claim(&self, num_to_claim: usize) -> isize;
-    fn commit(&self, id: isize);
+    fn make_claim(&self) -> isize;
+    fn commit_claim(&self, id: isize);
+    fn publish(&self, id: isize);
     fn current(&self) -> isize;
 }
 
@@ -23,6 +24,7 @@ pub trait Tracker {
 pub struct SequentialProducerTracker<WS> {
     claimed: AtomicIsize,
     committed: AtomicIsize,
+    published: AtomicIsize,
     wait_strategy: WS,
 }
 
@@ -34,6 +36,7 @@ where
         Self {
             claimed: Default::default(),
             committed: AtomicIsize::new(-1),
+            published: AtomicIsize::new(-1),
             wait_strategy,
         }
     }
@@ -44,7 +47,7 @@ where
     WS: WaitStrategy,
 {
     fn wait_for(&self, expected: isize) -> isize {
-        self.wait_strategy.wait_for_geq(&self.committed, expected)
+        self.wait_strategy.wait_for_geq(&self.published, expected)
     }
 }
 
@@ -52,15 +55,24 @@ impl<WS> ProducerTracker for SequentialProducerTracker<WS>
 where
     WS: WaitStrategy,
 {
-    fn claim(&self, num_to_claim: usize) -> isize {
-        self.claimed
-            .fetch_add(num_to_claim as isize, Ordering::SeqCst)
+    fn make_claim(&self) -> isize {
+        let claim = self.claimed.fetch_add(1, Ordering::SeqCst);
+        let expected = claim - 1;
+        while self.committed.load(Ordering::Relaxed) != expected {
+            core::hint::spin_loop();
+        }
+        claim
     }
 
-    fn commit(&self, id: isize) {
+    fn commit_claim(&self, id: isize) {
+        //TODO we shouldn't need a CAS here but maybe?
+        self.committed.store(id, Ordering::Release);
+    }
+
+    fn publish(&self, id: isize) {
         let expected = id - 1;
         while self
-            .committed
+            .published
             .compare_exchange_weak(expected, id, Ordering::Relaxed, Ordering::Relaxed)
             .is_err()
         {
@@ -70,6 +82,6 @@ where
     }
 
     fn current(&self) -> isize {
-        self.committed.load(Ordering::Acquire)
+        self.published.load(Ordering::Acquire)
     }
 }
