@@ -1,4 +1,7 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{
+    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, PlotConfiguration,
+    Throughput,
+};
 use std::fmt::{Display, Formatter};
 use std::sync::mpsc::TrySendError;
 use std::time::{Duration, Instant};
@@ -258,45 +261,53 @@ impl Display for RunParam {
 
 fn throughput(c: &mut Criterion) {
     let num_elements = 20000;
-    let max_writers = 2;
-    let max_readers = 2;
+    let max_writers = 3;
+    let max_readers = 3;
 
     let pool = Pool::<ThunkWorker<()>>::new(max_writers + max_readers);
     let (tx, mut rx) = std::sync::mpsc::channel();
 
-    for num_writers in 2..=max_writers {
-        for num_readers in 2..=max_readers {
-            let mut group = c.benchmark_group(format!("{num_writers}w, {num_readers}r"));
+    for num_writers in 1..=max_writers {
+        for num_readers in 1..=max_readers {
+            let mut group = c.benchmark_group("throughput");
             let input = (num_writers, num_readers);
             group.throughput(Throughput::Elements(
                 num_elements as u64 * num_writers as u64,
             ));
-            group.bench_with_input("nexus", &input, |b, &input| {
-                b.iter_custom(|iters| {
-                    black_box(nexus(
-                        num_elements,
-                        input.0,
-                        input.1,
-                        &pool,
-                        &tx,
-                        &mut rx,
-                        iters,
-                    ))
-                });
-            });
-            group.bench_with_input("multiq2", &input, |b, &input| {
-                b.iter_custom(|iters| {
-                    black_box(multiq2(
-                        num_elements,
-                        input.0,
-                        input.1,
-                        &pool,
-                        &tx,
-                        &mut rx,
-                        iters,
-                    ))
-                });
-            });
+            group.bench_with_input(
+                BenchmarkId::new("nexus", RunParam(input)),
+                &input,
+                |b, &input| {
+                    b.iter_custom(|iters| {
+                        black_box(nexus(
+                            num_elements,
+                            input.0,
+                            input.1,
+                            &pool,
+                            &tx,
+                            &mut rx,
+                            iters,
+                        ))
+                    });
+                },
+            );
+            group.bench_with_input(
+                BenchmarkId::new("multiq2", RunParam(input)),
+                &input,
+                |b, &input| {
+                    b.iter_custom(|iters| {
+                        black_box(multiq2(
+                            num_elements,
+                            input.0,
+                            input.1,
+                            &pool,
+                            &tx,
+                            &mut rx,
+                            iters,
+                        ))
+                    });
+                },
+            );
             group.finish();
         }
     }
