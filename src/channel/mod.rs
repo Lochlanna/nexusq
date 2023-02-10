@@ -169,7 +169,6 @@ mod tests {
     use crate::channel::sender::Sender;
     use crate::Receiver;
     use std::collections::HashMap;
-    use std::ops::Add;
     use std::thread::{spawn, JoinHandle};
     use std::time::Duration;
 
