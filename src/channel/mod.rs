@@ -3,15 +3,14 @@ pub mod sender;
 pub mod tracker;
 pub mod wait_strategy;
 
-use crate::channel::tracker::{
-    ProducerTracker, ReceiverTracker, SequentialProducerTracker, Tracker,
-};
+use crate::channel::tracker::{ProducerTracker, ReceiverTracker, Tracker};
 use crate::channel::wait_strategy::{BusyWait, SpinBlockWait};
 use crate::{BroadcastReceiver, BroadcastSender};
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use tracker::broadcast_tracker::MultiCursorTracker;
+use tracker::MultiCursorTracker;
+use tracker::SequentialProducerTracker;
 use wait_strategy::WaitStrategy;
 
 pub trait FastMod: Sized {
