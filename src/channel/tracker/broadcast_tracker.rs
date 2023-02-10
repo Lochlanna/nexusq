@@ -67,12 +67,8 @@ where
                 .get_unchecked(from_idx)
                 .fetch_sub(1, Ordering::SeqCst);
         }
-        if previous == 1
-            && self
-                .tail
-                .compare_exchange(from, to, Ordering::SeqCst, Ordering::Acquire)
-                .is_ok()
-        {
+        if previous == 1 && self.tail.load(Ordering::Acquire) == from {
+            self.tail.store(to, Ordering::Release);
             //the tail has moved. notify anyone who was listening
             self.wait_strategy.notify();
         }

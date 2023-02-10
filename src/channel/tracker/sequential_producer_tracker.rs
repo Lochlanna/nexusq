@@ -1,6 +1,6 @@
 use super::{ProducerTracker, Tracker};
 use crate::WaitStrategy;
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
 #[derive(Debug)]
 pub struct SequentialProducerTracker<WS> {
@@ -46,14 +46,10 @@ where
     }
 
     fn publish(&self, id: isize) {
-        let expected = id - 1;
-        while self
-            .published
-            .compare_exchange_weak(expected, id, Ordering::Release, Ordering::Relaxed)
-            .is_err()
-        {
+        while self.published.load(Ordering::Acquire) != id - 1 {
             core::hint::spin_loop();
         }
+        self.published.store(id, Ordering::Release);
         self.wait_strategy.notify();
     }
 }

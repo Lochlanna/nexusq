@@ -102,16 +102,7 @@ where
 {
     /// Try to read the next value from the channel. This function will not block and will return
     /// a [`ReaderError::NoNewData`] if there is no data available
-    fn try_read_next(&mut self) -> Result<CORE::T, ReaderError> {
-        if self.internal_cursor > self.committed_cache {
-            self.committed_cache = self.core.sender_tracker().current();
-            if self.internal_cursor > self.committed_cache {
-                return Err(ReaderError::NoNewData);
-            }
-        }
-        if self.committed_cache < 0 {
-            return Err(ReaderError::NoNewData);
-        }
+    fn read_next(&mut self) -> CORE::T {
         let index = self.internal_cursor.pow_2_mod(self.capacity) as usize;
         // the value has been committed so it's safe to read it!
         let value;
@@ -119,14 +110,17 @@ where
             value = (*self.core.ring()).get_unchecked(index).clone();
         }
         self.increment_cursor();
-        Ok(value)
+        value
     }
 
     /// Read the next value from the channel. This function will block and wait for data to
     /// become available.
     pub fn recv(&mut self) -> CORE::T {
-        self.core.sender_tracker().wait_for(self.internal_cursor);
-        self.try_read_next().expect("value wasn't ready!")
+        if self.committed_cache < self.internal_cursor {
+            self.committed_cache = self.core.sender_tracker().wait_for(self.internal_cursor);
+        }
+        debug_assert!(self.committed_cache >= self.internal_cursor);
+        self.read_next()
     }
 }
 

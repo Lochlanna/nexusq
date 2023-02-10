@@ -267,10 +267,13 @@ mod tests {
                             if val != value {
                                 missing.insert(*key, *val);
                             }
+                            continue;
                         }
                         missing.insert(*key, 0);
                     }
-                    println!("diff is {:?}", missing);
+                    if !missing.is_empty() {
+                        println!("diff is {:?}", missing);
+                    }
                     assert_eq!(resmap, expected);
                 }
                 Err(_) => panic!("reader didnt' read enough"),
