@@ -56,7 +56,7 @@ where
     WS: WaitStrategy,
 {
     fn make_claim(&self) -> isize {
-        let claim = self.claimed.fetch_add(1, Ordering::SeqCst);
+        let claim = self.claimed.fetch_add(1, Ordering::Acquire);
         let expected = claim - 1;
         while self.committed.load(Ordering::Relaxed) != expected {
             core::hint::spin_loop();
@@ -65,7 +65,6 @@ where
     }
 
     fn commit_claim(&self, id: isize) {
-        //TODO we shouldn't need a CAS here but maybe?
         self.committed.store(id, Ordering::Release);
     }
 
