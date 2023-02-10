@@ -272,7 +272,7 @@ mod tests {
                         missing.insert(*key, 0);
                     }
                     if !missing.is_empty() {
-                        println!("diff is {:?}", missing);
+                        println!("diff is {missing:?}");
                     }
                     assert_eq!(resmap, expected);
                 }
