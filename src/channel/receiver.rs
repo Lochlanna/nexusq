@@ -36,14 +36,11 @@ where
     fn from(core: Arc<CORE>) -> Self {
         //TODO we could have a race condition here where the writer overwrites the committed value
         // before registration happens! Unlikely unless the size is very small and writers are very very fast
-        let internal_cursor = core
-            .reader_tracker()
-            .register(core.sender_tracker().current());
-        let capacity = core.capacity() as isize;
         let committed = core.sender_tracker().current();
+        let capacity = core.capacity() as isize;
         Self {
             core,
-            internal_cursor,
+            internal_cursor: -1,
             capacity,
             committed_cache: committed,
         }
@@ -65,7 +62,9 @@ where
 {
     /// Creates a new receiver at the same point in the stream
     fn clone(&self) -> Self {
-        self.core.reader_tracker().register(self.internal_cursor);
+        if self.internal_cursor >= 0 {
+            self.core.reader_tracker().register(self.internal_cursor);
+        }
         Self {
             core: self.core.clone(),
             internal_cursor: self.internal_cursor,
@@ -80,11 +79,27 @@ where
     CORE: Core,
 {
     #[inline(always)]
-    fn increment_cursor(&mut self) {
+    fn increment_internal(&mut self) {
         self.internal_cursor += 1;
+    }
+    #[inline(always)]
+    fn publish_position(&self) {
+        self.core.reader_tracker().update(
+            (self.internal_cursor - 1).clamp(0, isize::MAX),
+            self.internal_cursor,
+        )
+    }
+    #[inline(always)]
+    fn register(&mut self) {
+        //TODO possible race on small buffer fast producer
+        let committed = self.core.sender_tracker().current();
+        debug_assert!(committed >= -1);
+        if committed >= 0 {
+            self.internal_cursor = committed - 1;
+        }
         self.core
             .reader_tracker()
-            .update(self.internal_cursor - 1, self.internal_cursor)
+            .register(self.internal_cursor.clamp(0, isize::MAX));
     }
     /// Creates a new receiver at the most recent entry in the stream
     pub fn add_stream(&self) -> Self {
@@ -100,27 +115,27 @@ where
     CORE: Core,
     <CORE as Core>::T: Clone,
 {
-    /// Try to read the next value from the channel. This function will not block and will return
-    /// a [`ReaderError::NoNewData`] if there is no data available
-    fn read_next(&mut self) -> CORE::T {
+    /// Read the next value from the channel. This function will block and wait for data to
+    /// become available.
+    pub fn recv(&mut self) -> CORE::T {
+        if self.internal_cursor == -1 {
+            self.register();
+        }
+        self.increment_internal();
+        if self.committed_cache < self.internal_cursor {
+            self.committed_cache = self.core.sender_tracker().wait_for(self.internal_cursor);
+        }
+        if self.internal_cursor > 0 {
+            self.publish_position();
+        }
+        debug_assert!(self.committed_cache >= self.internal_cursor);
         let index = self.internal_cursor.pow_2_mod(self.capacity) as usize;
         // the value has been committed so it's safe to read it!
         let value;
         unsafe {
             value = (*self.core.ring()).get_unchecked(index).clone();
         }
-        self.increment_cursor();
         value
-    }
-
-    /// Read the next value from the channel. This function will block and wait for data to
-    /// become available.
-    pub fn recv(&mut self) -> CORE::T {
-        if self.committed_cache < self.internal_cursor {
-            self.committed_cache = self.core.sender_tracker().wait_for(self.internal_cursor);
-        }
-        debug_assert!(self.committed_cache >= self.internal_cursor);
-        self.read_next()
     }
 }
 
