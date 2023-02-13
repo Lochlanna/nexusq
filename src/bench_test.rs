@@ -2,7 +2,6 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use std::io::Write;
-use std::sync::mpsc::TrySendError;
 
 use crate::{channel_with, BlockWait, ChannelHandles};
 use workerpool::thunk::{Thunk, ThunkWorker};
@@ -28,46 +27,6 @@ where
     }
 }
 
-impl<T> TestReceiver<T> for multiqueue::BroadcastReceiver<T>
-where
-    T: 'static + Clone + Send,
-{
-    #[inline(always)]
-    fn test_recv(&mut self) -> T {
-        loop {
-            let res = self.recv();
-            match res {
-                Ok(v) => return v,
-                Err(_) => continue,
-            }
-        }
-    }
-
-    fn another(&self) -> Self {
-        self.add_stream()
-    }
-}
-
-impl<T> TestReceiver<T> for multiqueue2::BroadcastReceiver<T>
-where
-    T: 'static + Clone + Send + Sync,
-{
-    #[inline(always)]
-    fn test_recv(&mut self) -> T {
-        loop {
-            let res = self.recv();
-            match res {
-                Ok(v) => return v,
-                Err(_) => continue,
-            }
-        }
-    }
-
-    fn another(&self) -> Self {
-        self.add_stream()
-    }
-}
-
 trait TestSender<T>: Send {
     fn test_send(&mut self, value: T);
     fn another(&self) -> Self;
@@ -80,44 +39,6 @@ where
 {
     fn test_send(&mut self, value: CORE::T) {
         self.send(value);
-    }
-
-    fn another(&self) -> Self {
-        self.clone()
-    }
-}
-
-impl<T> TestSender<T> for multiqueue::BroadcastSender<T>
-where
-    T: 'static + Clone + Send,
-{
-    #[inline(always)]
-    fn test_send(&mut self, mut value: T) {
-        while let Err(err) = self.try_send(value) {
-            match err {
-                TrySendError::Full(v) => value = v,
-                TrySendError::Disconnected(_) => panic!("multiq disconnected"),
-            }
-        }
-    }
-
-    fn another(&self) -> Self {
-        self.clone()
-    }
-}
-
-impl<T> TestSender<T> for multiqueue2::BroadcastSender<T>
-where
-    T: 'static + Clone + Send + Sync,
-{
-    #[inline(always)]
-    fn test_send(&mut self, mut value: T) {
-        while let Err(err) = self.try_send(value) {
-            match err {
-                TrySendError::Full(v) => value = v,
-                TrySendError::Disconnected(_) => panic!("multiq disconnected"),
-            }
-        }
     }
 
     fn another(&self) -> Self {

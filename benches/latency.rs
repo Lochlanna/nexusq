@@ -1,128 +1,13 @@
+mod shared;
+use shared::*;
+
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::fmt::{Display, Formatter};
-use std::sync::mpsc::TrySendError;
 use std::time::{Duration, Instant};
 
 use nexusq::{channel_with, BlockWait};
 use workerpool::thunk::{Thunk, ThunkWorker};
 use workerpool::Pool;
-
-trait TestReceiver<T>: Send {
-    fn test_recv(&mut self) -> T;
-    fn another(&self) -> Self;
-}
-
-impl<CORE> TestReceiver<CORE::T> for nexusq::BroadcastReceiver<CORE>
-where
-    CORE: nexusq::Core + Send + Sync,
-    <CORE as nexusq::Core>::T: Clone,
-{
-    #[inline(always)]
-    fn test_recv(&mut self) -> CORE::T {
-        self.recv()
-    }
-
-    fn another(&self) -> Self {
-        self.clone()
-    }
-}
-
-impl<T> TestReceiver<T> for multiqueue::BroadcastReceiver<T>
-where
-    T: 'static + Clone + Send,
-{
-    #[inline(always)]
-    fn test_recv(&mut self) -> T {
-        loop {
-            let res = self.recv();
-            match res {
-                Ok(v) => return v,
-                Err(_) => continue,
-            }
-        }
-    }
-
-    fn another(&self) -> Self {
-        self.add_stream()
-    }
-}
-
-impl<T> TestReceiver<T> for multiqueue2::BroadcastReceiver<T>
-where
-    T: 'static + Clone + Send + Sync,
-{
-    #[inline(always)]
-    fn test_recv(&mut self) -> T {
-        loop {
-            let res = self.recv();
-            match res {
-                Ok(v) => return v,
-                Err(_) => continue,
-            }
-        }
-    }
-
-    fn another(&self) -> Self {
-        self.add_stream()
-    }
-}
-
-trait TestSender<T>: Send {
-    fn test_send(&mut self, value: T);
-    fn another(&self) -> Self;
-}
-
-impl<CORE> TestSender<CORE::T> for nexusq::BroadcastSender<CORE>
-where
-    CORE: nexusq::Core + Send + Sync,
-    <CORE as nexusq::Core>::T: Send,
-{
-    fn test_send(&mut self, value: CORE::T) {
-        self.send(value);
-    }
-
-    fn another(&self) -> Self {
-        self.clone()
-    }
-}
-
-impl<T> TestSender<T> for multiqueue::BroadcastSender<T>
-where
-    T: 'static + Clone + Send,
-{
-    #[inline(always)]
-    fn test_send(&mut self, mut value: T) {
-        while let Err(err) = self.try_send(value) {
-            match err {
-                TrySendError::Full(v) => value = v,
-                TrySendError::Disconnected(_) => panic!("multiq disconnected"),
-            }
-        }
-    }
-
-    fn another(&self) -> Self {
-        self.clone()
-    }
-}
-
-impl<T> TestSender<T> for multiqueue2::BroadcastSender<T>
-where
-    T: 'static + Clone + Send + Sync,
-{
-    #[inline(always)]
-    fn test_send(&mut self, mut value: T) {
-        while let Err(err) = self.try_send(value) {
-            match err {
-                TrySendError::Full(v) => value = v,
-                TrySendError::Disconnected(_) => panic!("multiq disconnected"),
-            }
-        }
-    }
-
-    fn another(&self) -> Self {
-        self.clone()
-    }
-}
 
 #[inline(always)]
 fn read_n(mut receiver: impl TestReceiver<Instant> + 'static, num_to_read: usize) -> Vec<Duration> {
