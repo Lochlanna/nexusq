@@ -177,6 +177,7 @@ fn nexus(
     total_duration
 }
 
+/// Used for debugging and profiling. Based on the benchmark code
 #[test]
 #[ignore]
 fn test_bench() {

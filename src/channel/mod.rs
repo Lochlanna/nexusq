@@ -158,6 +158,8 @@ where
     ) -> Self {
         Self { sender, receiver }
     }
+    //Not sure how to get around the complexity without using dyn
+    #[allow(clippy::type_complexity)]
     pub fn dissolve(
         self,
     ) -> (
@@ -201,6 +203,7 @@ mod tests {
     use super::*;
     use crate::channel::sender::Sender;
     use crate::Receiver;
+    use pretty_assertions::assert_eq;
     use std::collections::HashMap;
     use std::thread::{spawn, JoinHandle};
     use std::time::Duration;
@@ -218,16 +221,20 @@ mod tests {
         for i in 0..num_to_read {
             let v = receiver.recv();
             assert!(v.is_ok());
-            if !sleep_time.is_zero() {
-                if i % seed == 0 {
-                    std::thread::sleep(jtter_duration);
-                } else {
-                    std::thread::sleep(sleep_time);
-                }
-            }
+            jitter_sleep(sleep_time, seed, jtter_duration, i);
             results.push(v.unwrap());
         }
         results
+    }
+
+    fn jitter_sleep(sleep_time: Duration, seed: usize, jtter_duration: Duration, i: usize) {
+        if !sleep_time.is_zero() {
+            if i % seed == 0 {
+                std::thread::sleep(jtter_duration);
+            } else {
+                std::thread::sleep(sleep_time);
+            }
+        }
     }
 
     #[inline(always)]
@@ -241,13 +248,7 @@ mod tests {
         let jtter_duration = sleep_time + sleep_time.div_f32(0.5);
         for i in 0..num_to_write {
             sender.send(i);
-            if !sleep_time.is_zero() {
-                if i % seed == 0 {
-                    std::thread::sleep(jtter_duration);
-                } else {
-                    std::thread::sleep(sleep_time);
-                }
-            }
+            jitter_sleep(sleep_time, seed, jtter_duration, i);
         }
     }
 
@@ -369,8 +370,68 @@ mod tests {
     }
 
     #[test]
+    fn two_writer_two_reader_slow_read_write() {
+        let num = 200;
+        test(
+            num,
+            2,
+            2,
+            4,
+            Duration::from_micros(20),
+            Duration::from_micros(20),
+        );
+    }
+
+    #[test]
     fn three_writer_three_reader() {
         let num = 5000;
         test(num, 3, 3, 10, Default::default(), Default::default());
+    }
+
+    #[test]
+    #[ignore]
+    fn ten_writer_ten_reader() {
+        let num = 2000;
+        test(num, 10, 10, 10, Default::default(), Default::default());
+    }
+
+    #[test]
+    #[ignore]
+    fn ten_writer_ten_reader_slow_read() {
+        let num = 200;
+        test(
+            num,
+            10,
+            10,
+            10,
+            Duration::from_micros(20),
+            Default::default(),
+        );
+    }
+    #[test]
+    fn ten_writer_ten_reader_slow_write() {
+        let num = 200;
+        test(
+            num,
+            10,
+            10,
+            10,
+            Default::default(),
+            Duration::from_micros(20),
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn ten_writer_ten_reader_slow_read_write() {
+        let num = 200;
+        test(
+            num,
+            10,
+            10,
+            10,
+            Duration::from_micros(20),
+            Duration::from_micros(20),
+        );
     }
 }
