@@ -1,7 +1,7 @@
 use super::Tracker;
 use crate::channel::tracker::ReceiverTracker;
 use crate::channel::wait_strategy::WaitStrategy;
-use crate::channel::FastMod;
+use crate::channel::{tracker, FastMod};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::atomic::AtomicIsize;
@@ -14,6 +14,7 @@ pub struct MultiCursorTracker<WS> {
     counters: Vec<AtomicUsize>,
     tail: AtomicIsize,
     wait_strategy: WS,
+    num_readers: AtomicUsize,
 }
 
 impl<WS> MultiCursorTracker<WS>
@@ -31,7 +32,12 @@ where
             counters,
             tail: Default::default(),
             wait_strategy,
+            num_readers: Default::default(),
         })
+    }
+
+    fn chase_tail(&self, from: isize) {
+        todo!()
     }
 }
 
@@ -39,8 +45,10 @@ impl<WS> ReceiverTracker for MultiCursorTracker<WS>
 where
     WS: WaitStrategy,
 {
-    fn register(&self, mut at: isize) -> isize {
-        //TODO there could be a race here if it gets overwritten
+    fn register(&self, mut at: isize) -> Result<isize, tracker::Error> {
+        if at < self.tail.load(Ordering::Acquire) {
+            return Err(tracker::Error::PositionTooOld);
+        }
         at = at.clamp(0, isize::MAX);
         let idx = (at as usize).pow_2_mod(self.counters.len());
         unsafe {
@@ -48,7 +56,20 @@ where
                 .get_unchecked(idx)
                 .fetch_add(1, Ordering::SeqCst);
         }
-        at
+        if at < self.tail.load(Ordering::Acquire) {
+            // we missed it. Undo
+            unsafe {
+                //TODO what about wrap around?
+                let previous = self
+                    .counters
+                    .get_unchecked(idx)
+                    .fetch_sub(1, Ordering::SeqCst);
+                debug_assert!(previous == 1);
+            }
+            return Err(tracker::Error::PositionTooOld);
+        }
+        self.num_readers.fetch_add(1, Ordering::Release);
+        Ok(at)
     }
 
     fn update(&self, from: isize, to: isize) {
@@ -85,6 +106,13 @@ where
                     .counters
                     .get_unchecked(index)
                     .fetch_sub(1, Ordering::SeqCst);
+            }
+            if previous == 1 && at == self.tail.load(Ordering::Acquire) {
+                if self.num_readers.load(Ordering::Acquire) == 0 {
+                    //TODO how do we do this
+                    return;
+                }
+                self.chase_tail(at);
             }
             debug_assert!(previous > 0);
         }
@@ -125,13 +153,13 @@ mod tracker_tests {
     fn add_remove_receiver() {
         let tracker = MultiCursorTracker::new(16, BusyWait::default())
             .expect("couldn't create multi cursor tracker");
-        let shared_cursor_a = tracker.register(0);
+        let shared_cursor_a = tracker.register(0).expect("couldn't register");
         assert_eq!(tracker.counters[0].load(Ordering::Acquire), 1);
         tracker.update(shared_cursor_a, 4);
         assert_eq!(tracker.counters[0].load(Ordering::Acquire), 0);
         assert_eq!(tracker.counters[4].load(Ordering::Acquire), 1);
 
-        let shared_cursor_b = tracker.register(2);
+        let shared_cursor_b = tracker.register(2).expect("couldn't register");
         assert_eq!(tracker.counters[2].load(Ordering::Acquire), 1);
         tracker.update(shared_cursor_b, 5);
         assert_eq!(tracker.counters[5].load(Ordering::Acquire), 1);

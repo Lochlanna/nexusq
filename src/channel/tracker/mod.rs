@@ -10,10 +10,12 @@ use thiserror::Error as ThisError;
 pub enum Error {
     #[error("size must be a power of 2")]
     InvalidSize,
+    #[error("the requested position no longer exists")]
+    PositionTooOld,
 }
 
 pub trait ReceiverTracker {
-    fn register(&self, at: isize) -> isize;
+    fn register(&self, at: isize) -> Result<isize, Error>;
     fn update(&self, from: isize, to: isize);
     fn de_register(&self, at: isize);
 }
