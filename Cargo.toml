@@ -19,6 +19,7 @@ no-std = []
 
 [dependencies]
 event-listener = "2.5.3"
+thiserror = "1.0.38"
 
 [dev-dependencies]
 criterion = { version = "0.4", features = ["async_tokio"]}

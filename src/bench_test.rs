@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use std::io::Write;
 use std::sync::mpsc::TrySendError;
 
-use crate::{channel_with, BlockWait};
+use crate::{channel_with, BlockWait, ChannelHandles};
 use workerpool::thunk::{Thunk, ThunkWorker};
 use workerpool::Pool;
 
@@ -150,7 +150,9 @@ fn nexus(
 ) -> Duration {
     let mut total_duration = Duration::new(0, 0);
     for _ in 0..iters {
-        let (sender, receiver) = channel_with(100, BlockWait::default(), BlockWait::default());
+        let ChannelHandles { sender, receiver } =
+            channel_with(100, BlockWait::default(), BlockWait::default())
+                .expect("couldn't create channel");
         let mut receivers: Vec<_> = (0..readers - 1).map(|_| receiver.another()).collect();
         let mut senders: Vec<_> = (0..writers - 1).map(|_| sender.another()).collect();
         receivers.push(receiver);

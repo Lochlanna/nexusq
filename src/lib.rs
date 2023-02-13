@@ -17,5 +17,5 @@ pub use channel::{
     receiver::{BroadcastReceiver, ReaderError, Receiver},
     sender::{BroadcastSender, Sender, SenderError},
     wait_strategy::*,
-    Core,
+    ChannelHandles, Core,
 };

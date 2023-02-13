@@ -20,16 +20,18 @@ impl<WS> MultiCursorTracker<WS>
 where
     WS: WaitStrategy,
 {
-    pub fn new(mut size: usize, wait_strategy: WS) -> Self {
+    pub fn new(size: usize, wait_strategy: WS) -> Result<Self, super::Error> {
         // This is very inefficient but it's to prevent collision on wrapping
-        size = (size + 1).next_power_of_two();
+        if !size.is_power_of_two() {
+            return Err(super::Error::InvalidSize);
+        }
         let mut counters = Vec::new();
         counters.resize_with(size, Default::default);
-        Self {
+        Ok(Self {
             counters,
             tail: Default::default(),
             wait_strategy,
-        }
+        })
     }
 }
 
@@ -107,8 +109,22 @@ mod tracker_tests {
     use crate::channel::wait_strategy::BusyWait;
 
     #[test]
+    fn invalid_size() {
+        let create = |s: usize| MultiCursorTracker::new(s, BusyWait::default());
+        for size in 0..300 {
+            let res = create(size);
+            if size.is_power_of_two() {
+                assert!(res.is_ok());
+            } else {
+                assert!(res.is_err());
+            }
+        }
+    }
+
+    #[test]
     fn add_remove_receiver() {
-        let tracker = MultiCursorTracker::new(10, BusyWait::default());
+        let tracker = MultiCursorTracker::new(16, BusyWait::default())
+            .expect("couldn't create multi cursor tracker");
         let shared_cursor_a = tracker.register(0);
         assert_eq!(tracker.counters[0].load(Ordering::Acquire), 1);
         tracker.update(shared_cursor_a, 4);

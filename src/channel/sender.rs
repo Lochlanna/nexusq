@@ -122,7 +122,7 @@ mod sender_tests {
 
     #[test]
     fn sender_from_receiver() {
-        let (_, mut receiver) = channel(10);
+        let (_, mut receiver) = channel(10).expect("couldn't create channel").dissolve();
         let mut sender: BroadcastSender<Ring<i32, SpinBlockWait, SpinBlockWait>> =
             receiver.clone().into();
         sender.send(42);

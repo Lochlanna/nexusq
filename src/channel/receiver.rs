@@ -155,7 +155,7 @@ mod receiver_tests {
 
     #[test]
     fn receiver_from_sender() {
-        let (mut sender, _) = channel(10);
+        let (mut sender, _) = channel(10).expect("couldn't create channel").dissolve();
         sender.send(42);
         let mut receiver: BroadcastReceiver<Ring<i32, SpinBlockWait, SpinBlockWait>> =
             sender.into();

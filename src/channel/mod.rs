@@ -9,9 +9,26 @@ use crate::{BroadcastReceiver, BroadcastSender};
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use thiserror::Error as ThisError;
 use tracker::MultiCursorTracker;
 use tracker::SequentialProducerTracker;
 use wait_strategy::WaitStrategy;
+
+#[derive(Debug, ThisError)]
+pub enum Error {
+    #[error("size must be a power of 2")]
+    InvalidSize,
+    #[error("requested buffer too big")]
+    BufferTooBig,
+}
+
+impl From<tracker::Error> for Error {
+    fn from(error: tracker::Error) -> Self {
+        match error {
+            tracker::Error::InvalidSize => Self::InvalidSize,
+        }
+    }
+}
 
 pub trait FastMod: Sized {
     fn pow_2_mod(&self, denominator: Self) -> Self;
@@ -74,25 +91,28 @@ where
         mut buffer_size: usize,
         write_tracker_wait_strategy: WWS,
         read_tracker_wait_strategy: RWS,
-    ) -> Self {
-        buffer_size = buffer_size
-            .checked_next_power_of_two()
-            .expect("usize wrapped!");
+    ) -> Result<Self, Error> {
+        buffer_size = if let Some(bs) = buffer_size.checked_next_power_of_two() {
+            bs
+        } else {
+            return Err(Error::BufferTooBig);
+        };
+        if buffer_size > isize::MAX as usize {
+            return Err(Error::BufferTooBig);
+        }
         let mut ring = Box::new(Vec::with_capacity(buffer_size));
-        //TODO check that it's not bigger than isize::MAX
-        assert!(buffer_size < isize::MAX as usize);
         unsafe {
             ring.set_len(buffer_size);
         }
 
         let ring = Box::into_raw(ring);
 
-        Self {
+        Ok(Self {
             ring,
             capacity: buffer_size,
             sender_tracker: SequentialProducerTracker::new(write_tracker_wait_strategy),
-            reader_tracker: MultiCursorTracker::new(buffer_size, read_tracker_wait_strategy),
-        }
+            reader_tracker: MultiCursorTracker::new(buffer_size, read_tracker_wait_strategy)?,
+        })
     }
 }
 
@@ -122,22 +142,38 @@ where
     }
 }
 
+pub struct ChannelHandles<T, WTWS: WaitStrategy, RTWS: WaitStrategy> {
+    pub sender: BroadcastSender<Ring<T, WTWS, RTWS>>,
+    pub receiver: BroadcastReceiver<Ring<T, WTWS, RTWS>>,
+}
+
+impl<T, WTWS, RTWS> ChannelHandles<T, WTWS, RTWS>
+where
+    WTWS: WaitStrategy,
+    RTWS: WaitStrategy,
+{
+    fn new(
+        sender: BroadcastSender<Ring<T, WTWS, RTWS>>,
+        receiver: BroadcastReceiver<Ring<T, WTWS, RTWS>>,
+    ) -> Self {
+        Self { sender, receiver }
+    }
+    pub fn dissolve(
+        self,
+    ) -> (
+        BroadcastSender<Ring<T, WTWS, RTWS>>,
+        BroadcastReceiver<Ring<T, WTWS, RTWS>>,
+    ) {
+        (self.sender, self.receiver)
+    }
+}
+
 ///Creates a new mpmc broadcast channel returning both a sender and receiver
-pub fn channel<T>(
-    size: usize,
-) -> (
-    BroadcastSender<Ring<T, SpinBlockWait, SpinBlockWait>>,
-    BroadcastReceiver<Ring<T, SpinBlockWait, SpinBlockWait>>,
-) {
+pub fn channel<T>(size: usize) -> Result<ChannelHandles<T, SpinBlockWait, SpinBlockWait>, Error> {
     channel_with(size, SpinBlockWait::default(), SpinBlockWait::default())
 }
 
-pub fn busy_channel<T>(
-    size: usize,
-) -> (
-    BroadcastSender<Ring<T, BusyWait, BusyWait>>,
-    BroadcastReceiver<Ring<T, BusyWait, BusyWait>>,
-) {
+pub fn busy_channel<T>(size: usize) -> Result<ChannelHandles<T, BusyWait, BusyWait>, Error> {
     channel_with(size, Default::default(), Default::default())
 }
 
@@ -145,10 +181,7 @@ pub fn channel_with<T, WTWS, RTWS>(
     size: usize,
     write_tracker_wait_strategy: WTWS,
     read_tracker_wait_strategy: RTWS,
-) -> (
-    BroadcastSender<Ring<T, WTWS, RTWS>>,
-    BroadcastReceiver<Ring<T, WTWS, RTWS>>,
-)
+) -> Result<ChannelHandles<T, WTWS, RTWS>, Error>
 where
     WTWS: WaitStrategy,
     RTWS: WaitStrategy,
@@ -157,10 +190,10 @@ where
         size,
         write_tracker_wait_strategy,
         read_tracker_wait_strategy,
-    ));
+    )?);
     let sender = sender::BroadcastSender::from(core.clone());
     let receiver = receiver::BroadcastReceiver::from(core);
-    (sender, receiver)
+    Ok(ChannelHandles::new(sender, receiver))
 }
 
 #[cfg(test)]
@@ -227,7 +260,8 @@ mod tests {
         read_sleep: Duration,
         write_sleep: Duration,
     ) {
-        let (sender, receiver) = channel(buffer_size);
+        let ChannelHandles { sender, receiver } =
+            channel(buffer_size).expect("couldn't create channel");
         let readers: Vec<JoinHandle<Vec<usize>>> = (0..num_readers)
             .map(|i| {
                 let new_receiver = receiver.clone();
@@ -289,7 +323,10 @@ mod tests {
 
     #[test]
     fn single_writer_single_reader_clone() {
-        let (mut sender, mut receiver) = channel(10);
+        let ChannelHandles {
+            mut sender,
+            mut receiver,
+        } = channel(10).expect("couldn't create channel");
         sender.send(String::from("hello world"));
         let res = receiver.recv();
         assert_eq!(res, "hello world");
