@@ -25,7 +25,9 @@ where
     CORE: Core,
 {
     fn drop(&mut self) {
-        self.core.reader_tracker().de_register(self.internal_cursor);
+        self.core
+            .reader_tracker()
+            .de_register(self.internal_cursor.clamp(0, isize::MAX));
     }
 }
 
@@ -37,10 +39,14 @@ where
         //TODO we could have a race condition here where the writer overwrites the committed value
         // before registration happens! Unlikely unless the size is very small and writers are very very fast
         let committed = core.sender_tracker().current();
+        let internal_cursor = committed.clamp(0, isize::MAX) - 1;
+        core.reader_tracker()
+            .register(committed.clamp(0, isize::MAX));
+
         let capacity = core.capacity() as isize;
         Self {
             core,
-            internal_cursor: -1,
+            internal_cursor,
             capacity,
             committed_cache: committed,
         }
@@ -62,9 +68,7 @@ where
 {
     /// Creates a new receiver at the same point in the stream
     fn clone(&self) -> Self {
-        if self.internal_cursor >= 0 {
-            self.core.reader_tracker().register(self.internal_cursor);
-        }
+        self.core.reader_tracker().register(self.internal_cursor);
         Self {
             core: self.core.clone(),
             internal_cursor: self.internal_cursor,
@@ -84,10 +88,9 @@ where
     }
     #[inline(always)]
     fn publish_position(&self) {
-        self.core.reader_tracker().update(
-            (self.internal_cursor - 1).clamp(0, isize::MAX),
-            self.internal_cursor,
-        )
+        self.core
+            .reader_tracker()
+            .update(self.internal_cursor - 1, self.internal_cursor)
     }
     #[inline(always)]
     fn register(&mut self) {
@@ -118,9 +121,6 @@ where
     /// Read the next value from the channel. This function will block and wait for data to
     /// become available.
     pub fn recv(&mut self) -> CORE::T {
-        if self.internal_cursor == -1 {
-            self.register();
-        }
         self.increment_internal();
         if self.committed_cache < self.internal_cursor {
             self.committed_cache = self.core.sender_tracker().wait_for(self.internal_cursor);
