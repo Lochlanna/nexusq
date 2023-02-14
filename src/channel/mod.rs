@@ -15,7 +15,7 @@ use tracker::SequentialProducerTracker;
 use wait_strategy::WaitStrategy;
 
 #[derive(Debug, ThisError)]
-pub enum Error {
+pub enum ChannelError {
     #[error("size must be a power of 2")]
     InvalidSize,
     #[error("failed to setup the channel")]
@@ -24,7 +24,7 @@ pub enum Error {
     BufferTooBig,
 }
 
-impl From<tracker::TrackerError> for Error {
+impl From<tracker::TrackerError> for ChannelError {
     fn from(error: tracker::TrackerError) -> Self {
         match error {
             tracker::TrackerError::InvalidSize => Self::InvalidSize,
@@ -33,7 +33,7 @@ impl From<tracker::TrackerError> for Error {
     }
 }
 
-impl From<receiver::ReceiverError> for Error {
+impl From<receiver::ReceiverError> for ChannelError {
     fn from(error: receiver::ReceiverError) -> Self {
         match error {
             ReceiverError::RegistrationFailed(_) => Self::SetupFailed(Box::new(error)),
@@ -103,14 +103,14 @@ where
         mut buffer_size: usize,
         write_tracker_wait_strategy: WWS,
         read_tracker_wait_strategy: RWS,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, ChannelError> {
         buffer_size = if let Some(bs) = buffer_size.checked_next_power_of_two() {
             bs
         } else {
-            return Err(Error::BufferTooBig);
+            return Err(ChannelError::BufferTooBig);
         };
         if buffer_size > isize::MAX as usize {
-            return Err(Error::BufferTooBig);
+            return Err(ChannelError::BufferTooBig);
         }
         let mut ring = Box::new(Vec::with_capacity(buffer_size));
         unsafe {
@@ -183,11 +183,13 @@ where
 }
 
 ///Creates a new mpmc broadcast channel returning both a sender and receiver
-pub fn channel<T>(size: usize) -> Result<ChannelHandles<T, SpinBlockWait, SpinBlockWait>, Error> {
+pub fn channel<T>(
+    size: usize,
+) -> Result<ChannelHandles<T, SpinBlockWait, SpinBlockWait>, ChannelError> {
     channel_with(size, SpinBlockWait::default(), SpinBlockWait::default())
 }
 
-pub fn busy_channel<T>(size: usize) -> Result<ChannelHandles<T, BusyWait, BusyWait>, Error> {
+pub fn busy_channel<T>(size: usize) -> Result<ChannelHandles<T, BusyWait, BusyWait>, ChannelError> {
     channel_with(size, Default::default(), Default::default())
 }
 
@@ -195,7 +197,7 @@ pub fn channel_with<T, WTWS, RTWS>(
     size: usize,
     write_tracker_wait_strategy: WTWS,
     read_tracker_wait_strategy: RTWS,
-) -> Result<ChannelHandles<T, WTWS, RTWS>, Error>
+) -> Result<ChannelHandles<T, WTWS, RTWS>, ChannelError>
 where
     WTWS: WaitStrategy,
     RTWS: WaitStrategy,
