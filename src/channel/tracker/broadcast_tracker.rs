@@ -14,7 +14,7 @@ pub struct MultiCursorTracker<WS> {
     counters: Vec<AtomicUsize>,
     tail: AtomicIsize,
     wait_strategy: WS,
-    num_readers: AtomicUsize,
+    num_readers: AtomicIsize,
 }
 
 impl<WS> MultiCursorTracker<WS>
@@ -37,7 +37,29 @@ where
     }
 
     fn chase_tail(&self, from: isize) {
-        todo!()
+        //find the next tail by iterating over the ring
+        let mut current_id = from as usize;
+        loop {
+            if self.num_readers.load(Ordering::Acquire) == 0 {
+                // There are no readers left!
+                break;
+            }
+            let index = current_id.pow_2_mod(self.counters.len());
+            let cell;
+            unsafe {
+                cell = self.counters.get_unchecked(index);
+            }
+            if cell.load(Ordering::Acquire) > 0 {
+                self.tail.store(current_id as isize, Ordering::Release);
+                if cell.load(Ordering::Acquire) != 0
+                    || self.tail.load(Ordering::Acquire) > (current_id as isize)
+                {
+                    return;
+                }
+                debug_assert!(self.tail.load(Ordering::Acquire) == current_id as isize);
+            }
+            current_id += 1;
+        }
     }
 }
 
@@ -46,10 +68,10 @@ where
     WS: WaitStrategy,
 {
     fn register(&self, mut at: isize) -> Result<isize, tracker::Error> {
+        at = at.clamp(0, isize::MAX);
         if at < self.tail.load(Ordering::Acquire) {
             return Err(tracker::Error::PositionTooOld);
         }
-        at = at.clamp(0, isize::MAX);
         let idx = (at as usize).pow_2_mod(self.counters.len());
         unsafe {
             self.counters
@@ -59,7 +81,6 @@ where
         if at < self.tail.load(Ordering::Acquire) {
             // we missed it. Undo
             unsafe {
-                //TODO what about wrap around?
                 let previous = self
                     .counters
                     .get_unchecked(idx)
@@ -99,6 +120,7 @@ where
 
     fn de_register(&self, at: isize) {
         if at >= 0 {
+            let num_readers_left = self.num_readers.fetch_sub(1, Ordering::Release) - 1;
             let index = (at as usize).pow_2_mod(self.counters.len());
             let previous;
             unsafe {
@@ -107,11 +129,10 @@ where
                     .get_unchecked(index)
                     .fetch_sub(1, Ordering::SeqCst);
             }
+            if num_readers_left == 0 {
+                return;
+            }
             if previous == 1 && at == self.tail.load(Ordering::Acquire) {
-                if self.num_readers.load(Ordering::Acquire) == 0 {
-                    //TODO how do we do this
-                    return;
-                }
                 self.chase_tail(at);
             }
             debug_assert!(previous > 0);
@@ -159,19 +180,25 @@ mod tracker_tests {
         assert_eq!(tracker.counters[0].load(Ordering::Acquire), 0);
         assert_eq!(tracker.counters[4].load(Ordering::Acquire), 1);
 
-        let shared_cursor_b = tracker.register(2).expect("couldn't register");
-        assert_eq!(tracker.counters[2].load(Ordering::Acquire), 1);
-        tracker.update(shared_cursor_b, 5);
-        assert_eq!(tracker.counters[5].load(Ordering::Acquire), 1);
+        assert!(tracker.register(2).is_err());
+
+        let shared_cursor_b = tracker.register(4).expect("couldn't register");
+        assert_eq!(tracker.counters[4].load(Ordering::Acquire), 2);
+        tracker.update(shared_cursor_b, 6);
+        assert_eq!(tracker.counters[6].load(Ordering::Acquire), 1);
+        assert_eq!(tracker.counters[4].load(Ordering::Acquire), 1);
 
         tracker.de_register(4);
         assert_eq!(tracker.counters[4].load(Ordering::Acquire), 0);
+        assert_eq!(tracker.tail.load(Ordering::Acquire), 6);
 
-        tracker.update(5, 7);
-        assert_eq!(tracker.counters[5].load(Ordering::Acquire), 0);
+        tracker.update(6, 7);
         assert_eq!(tracker.counters[6].load(Ordering::Acquire), 0);
         assert_eq!(tracker.counters[7].load(Ordering::Acquire), 1);
+        assert_eq!(tracker.tail.load(Ordering::Acquire), 7);
 
         tracker.de_register(7);
+        assert_eq!(tracker.tail.load(Ordering::Acquire), 7);
+        assert_eq!(tracker.num_readers.load(Ordering::Acquire), 0);
     }
 }

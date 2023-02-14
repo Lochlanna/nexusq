@@ -18,6 +18,8 @@ use wait_strategy::WaitStrategy;
 pub enum Error {
     #[error("size must be a power of 2")]
     InvalidSize,
+    #[error("failed to setup the channel")]
+    SetupFailed,
     #[error("requested buffer too big")]
     BufferTooBig,
 }
@@ -26,6 +28,7 @@ impl From<tracker::Error> for Error {
     fn from(error: tracker::Error) -> Self {
         match error {
             tracker::Error::InvalidSize => Self::InvalidSize,
+            tracker::Error::PositionTooOld => Self::SetupFailed,
         }
     }
 }
