@@ -14,7 +14,7 @@ mod channel;
 
 pub use channel::{
     busy_channel, channel, channel_with,
-    receiver::{BroadcastReceiver, ReaderError, Receiver},
+    receiver::{BroadcastReceiver, Receiver, ReceiverError},
     sender::{BroadcastSender, Sender, SenderError},
     wait_strategy::*,
     ChannelHandles, Core,

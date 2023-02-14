@@ -7,7 +7,7 @@ pub use sequential_producer_tracker::SequentialProducerTracker;
 use thiserror::Error as ThisError;
 
 #[derive(ThisError, Debug)]
-pub enum Error {
+pub enum TrackerError {
     #[error("size must be a power of 2")]
     InvalidSize,
     #[error("the requested position no longer exists")]
@@ -15,7 +15,7 @@ pub enum Error {
 }
 
 pub trait ReceiverTracker {
-    fn register(&self, at: isize) -> Result<isize, Error>;
+    fn register(&self, at: isize) -> Result<isize, TrackerError>;
     fn update(&self, from: isize, to: isize);
     fn de_register(&self, at: isize);
 }

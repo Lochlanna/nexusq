@@ -21,10 +21,10 @@ impl<WS> MultiCursorTracker<WS>
 where
     WS: WaitStrategy,
 {
-    pub fn new(size: usize, wait_strategy: WS) -> Result<Self, super::Error> {
+    pub fn new(size: usize, wait_strategy: WS) -> Result<Self, super::TrackerError> {
         // This is very inefficient but it's to prevent collision on wrapping
         if !size.is_power_of_two() {
-            return Err(super::Error::InvalidSize);
+            return Err(super::TrackerError::InvalidSize);
         }
         let mut counters = Vec::new();
         counters.resize_with(size, Default::default);
@@ -67,10 +67,10 @@ impl<WS> ReceiverTracker for MultiCursorTracker<WS>
 where
     WS: WaitStrategy,
 {
-    fn register(&self, mut at: isize) -> Result<isize, tracker::Error> {
+    fn register(&self, mut at: isize) -> Result<isize, tracker::TrackerError> {
         at = at.clamp(0, isize::MAX);
         if at < self.tail.load(Ordering::Acquire) {
-            return Err(tracker::Error::PositionTooOld);
+            return Err(tracker::TrackerError::PositionTooOld);
         }
         let idx = (at as usize).pow_2_mod(self.counters.len());
         unsafe {
@@ -87,7 +87,7 @@ where
                     .fetch_sub(1, Ordering::SeqCst);
                 debug_assert!(previous == 1);
             }
-            return Err(tracker::Error::PositionTooOld);
+            return Err(tracker::TrackerError::PositionTooOld);
         }
         self.num_readers.fetch_add(1, Ordering::Release);
         Ok(at)

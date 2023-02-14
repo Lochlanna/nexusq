@@ -5,7 +5,7 @@ pub mod wait_strategy;
 
 use crate::channel::tracker::{ProducerTracker, ReceiverTracker, Tracker};
 use crate::channel::wait_strategy::{BusyWait, SpinBlockWait};
-use crate::{BroadcastReceiver, BroadcastSender};
+use crate::{BroadcastReceiver, BroadcastSender, ReceiverError};
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -19,16 +19,25 @@ pub enum Error {
     #[error("size must be a power of 2")]
     InvalidSize,
     #[error("failed to setup the channel")]
-    SetupFailed,
+    SetupFailed(#[from] Box<dyn std::error::Error>),
     #[error("requested buffer too big")]
     BufferTooBig,
 }
 
-impl From<tracker::Error> for Error {
-    fn from(error: tracker::Error) -> Self {
+impl From<tracker::TrackerError> for Error {
+    fn from(error: tracker::TrackerError) -> Self {
         match error {
-            tracker::Error::InvalidSize => Self::InvalidSize,
-            tracker::Error::PositionTooOld => Self::SetupFailed,
+            tracker::TrackerError::InvalidSize => Self::InvalidSize,
+            tracker::TrackerError::PositionTooOld => Self::SetupFailed(Box::new(error)),
+        }
+    }
+}
+
+impl From<receiver::ReceiverError> for Error {
+    fn from(error: receiver::ReceiverError) -> Self {
+        match error {
+            ReceiverError::RegistrationFailed(_) => Self::SetupFailed(Box::new(error)),
+            _ => panic!("this path shouldn't be possible, error was {:?}", error),
         }
     }
 }
@@ -197,7 +206,7 @@ where
         read_tracker_wait_strategy,
     )?);
     let sender = sender::BroadcastSender::from(core.clone());
-    let receiver = receiver::BroadcastReceiver::from(core);
+    let receiver = receiver::BroadcastReceiver::try_from(core)?;
     Ok(ChannelHandles::new(sender, receiver))
 }
 

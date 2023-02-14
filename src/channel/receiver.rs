@@ -1,15 +1,18 @@
 use super::*;
-use crate::channel::tracker::Tracker;
+use crate::channel::tracker::{Tracker, TrackerError};
 use alloc::sync::Arc;
+use thiserror::Error as ThisError;
 
-#[derive(Debug)]
-pub enum ReaderError {
-    /// There is nothing new to be read from the channel
+#[derive(Debug, ThisError)]
+pub enum ReceiverError {
+    #[error("There is nothing new to be read from the channel")]
     NoNewData,
+    #[error("failed to register the receiver on the channel. Generally a result of the channel being entirely overwritten too quickly")]
+    RegistrationFailed(#[from] TrackerError),
 }
 
 pub trait Receiver<T>: Clone {
-    fn recv(&mut self) -> Result<T, ReaderError>;
+    fn recv(&mut self) -> Result<T, ReceiverError>;
 }
 
 #[derive(Debug)]
@@ -31,34 +34,36 @@ where
     }
 }
 
-impl<CORE> From<Arc<CORE>> for BroadcastReceiver<CORE>
+impl<CORE> TryFrom<Arc<CORE>> for BroadcastReceiver<CORE>
 where
     CORE: Core,
 {
-    fn from(core: Arc<CORE>) -> Self {
-        //TODO we could have a race condition here where the writer overwrites the committed value
-        // before registration happens! Unlikely unless the size is very small and writers are very very fast
+    type Error = ReceiverError;
+
+    fn try_from(core: Arc<CORE>) -> Result<Self, Self::Error> {
         let committed = core.sender_tracker().current();
         let internal_cursor = committed.clamp(0, isize::MAX) - 1;
         core.reader_tracker()
-            .register(committed.clamp(0, isize::MAX));
+            .register(committed.clamp(0, isize::MAX))?;
 
         let capacity = core.capacity() as isize;
-        Self {
+        Ok(Self {
             core,
             internal_cursor,
             capacity,
             committed_cache: committed,
-        }
+        })
     }
 }
 
-impl<CORE> From<BroadcastSender<CORE>> for BroadcastReceiver<CORE>
+impl<CORE> TryFrom<BroadcastSender<CORE>> for BroadcastReceiver<CORE>
 where
     CORE: Core,
 {
-    fn from(sender: BroadcastSender<CORE>) -> Self {
-        sender.get_core().into()
+    type Error = ReceiverError;
+
+    fn try_from(sender: BroadcastSender<CORE>) -> Result<Self, Self::Error> {
+        sender.get_core().try_into()
     }
 }
 
@@ -68,7 +73,10 @@ where
 {
     /// Creates a new receiver at the same point in the stream
     fn clone(&self) -> Self {
-        self.core.reader_tracker().register(self.internal_cursor);
+        self.core
+            .reader_tracker()
+            .register(self.internal_cursor)
+            .expect("couldn't register receiver during clone");
         Self {
             core: self.core.clone(),
             internal_cursor: self.internal_cursor,
@@ -92,21 +100,9 @@ where
             .reader_tracker()
             .update(self.internal_cursor - 1, self.internal_cursor)
     }
-    #[inline(always)]
-    fn register(&mut self) {
-        //TODO possible race on small buffer fast producer
-        let committed = self.core.sender_tracker().current();
-        debug_assert!(committed >= -1);
-        if committed >= 0 {
-            self.internal_cursor = committed - 1;
-        }
-        self.core
-            .reader_tracker()
-            .register(self.internal_cursor.clamp(0, isize::MAX));
-    }
     /// Creates a new receiver at the most recent entry in the stream
-    pub fn add_stream(&self) -> Self {
-        self.core.clone().into()
+    pub fn add_stream(&self) -> Result<Self, ReceiverError> {
+        self.core.clone().try_into()
     }
     pub(crate) fn get_core(&self) -> Arc<CORE> {
         self.core.clone()
@@ -144,7 +140,7 @@ where
     CORE: Core,
     <CORE as Core>::T: Clone,
 {
-    fn recv(&mut self) -> Result<CORE::T, ReaderError> {
+    fn recv(&mut self) -> Result<CORE::T, ReceiverError> {
         Ok(BroadcastReceiver::recv(self))
     }
 }
@@ -157,8 +153,9 @@ mod receiver_tests {
     fn receiver_from_sender() {
         let (mut sender, _) = channel(10).expect("couldn't create channel").dissolve();
         sender.send(42);
-        let mut receiver: BroadcastReceiver<Ring<i32, SpinBlockWait, SpinBlockWait>> =
-            sender.into();
+        let mut receiver: BroadcastReceiver<Ring<i32, SpinBlockWait, SpinBlockWait>> = sender
+            .try_into()
+            .expect("couldn't create receiver from sender");
         let v = receiver.recv();
         assert_eq!(v, 42);
     }
