@@ -22,7 +22,6 @@ where
     WS: WaitStrategy,
 {
     pub fn new(size: usize, wait_strategy: WS) -> Result<Self, super::TrackerError> {
-        // This is very inefficient but it's to prevent collision on wrapping
         if !size.is_power_of_two() {
             return Err(super::TrackerError::InvalidSize);
         }

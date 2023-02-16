@@ -60,16 +60,14 @@ impl<CORE> BroadcastSender<CORE>
 where
     CORE: Core,
 {
-    //TODO this can probably be cut down / optimised a bit...
     fn claim(&mut self) -> isize {
-        let sender_tracker = self.core.sender_tracker();
-
-        let claimed = sender_tracker.make_claim();
+        let claimed = self.core.sender_tracker().make_claim();
 
         let tail = claimed - self.capacity;
         if tail >= 0 && self.cached_tail <= tail {
             self.cached_tail = self.core.reader_tracker().wait_for(tail + 1);
         }
+        debug_assert!(tail < 0 || self.cached_tail > tail);
 
         claimed
     }

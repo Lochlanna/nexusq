@@ -1,7 +1,5 @@
 #![allow(dead_code)]
 #![doc = include_str!("../README.md")]
-// #![cfg(feature = "no-std")]
-// #![no_std]
 
 #[cfg(test)]
 extern crate std;

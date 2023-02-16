@@ -49,7 +49,7 @@ where
         // We don't need the compare and the swap to be a single atomic instruction.
         // It's cheaper to just do loads and then store when it is ready.
         // The algorithm will guarantee this is okay
-        while self.published.load(Ordering::Acquire) != id - 1 {
+        while self.published.load(Ordering::Relaxed) != id - 1 {
             core::hint::spin_loop();
         }
         self.published.store(id, Ordering::Release);

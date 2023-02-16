@@ -1,16 +1,11 @@
 use core::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
 pub trait Waitable: Sync {
-    type InnerType;
-    fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType>;
-    fn equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType>;
-}
-
-impl Waitable for &AtomicIsize {
-    type InnerType = isize;
+    type InnerType: Ord;
+    fn current_value(&self) -> Self::InnerType;
     #[inline(always)]
     fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
-        let value = self.load(Ordering::Acquire);
+        let value = self.current_value();
         if value >= *expected {
             return Some(value);
         }
@@ -18,32 +13,25 @@ impl Waitable for &AtomicIsize {
     }
     #[inline(always)]
     fn equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
-        let value = self.load(Ordering::Acquire);
+        let value = self.current_value();
         if value == *expected {
             return Some(value);
         }
         None
+    }
+}
+
+impl Waitable for &AtomicIsize {
+    type InnerType = isize;
+    fn current_value(&self) -> Self::InnerType {
+        self.load(Ordering::Acquire)
     }
 }
 
 impl Waitable for &AtomicUsize {
     type InnerType = usize;
-
-    #[inline(always)]
-    fn greater_than_equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
-        let value = self.load(Ordering::Acquire);
-        if value >= *expected {
-            return Some(value);
-        }
-        None
-    }
-    #[inline(always)]
-    fn equal_to(&self, expected: &Self::InnerType) -> Option<Self::InnerType> {
-        let value = self.load(Ordering::Acquire);
-        if value == *expected {
-            return Some(value);
-        }
-        None
+    fn current_value(&self) -> Self::InnerType {
+        self.load(Ordering::Acquire)
     }
 }
 
@@ -183,7 +171,7 @@ impl Default for SleepWait {
 
 #[derive(Debug)]
 pub struct SpinBlockWait {
-    event: event_listener::Event,
+    block_wait: BlockWait,
     num_spin: u32,
     num_yield: u32,
 }
@@ -203,7 +191,7 @@ impl Default for SpinBlockWait {
 impl SpinBlockWait {
     pub fn new(num_spin: u32, num_yield: u32) -> Self {
         Self {
-            event: Default::default(),
+            block_wait: Default::default(),
             num_spin,
             num_yield,
         }
@@ -229,21 +217,12 @@ impl WaitStrategy for SpinBlockWait {
             }
             std::thread::yield_now();
         }
-        loop {
-            if let Some(result) = check(&value, &expected) {
-                return result;
-            }
-            let listener = self.event.listen();
-            if let Some(result) = check(&value, &expected) {
-                return result;
-            }
-            listener.wait();
-        }
+        self.block_wait.wait(value, expected, check)
     }
 
     #[inline(always)]
     fn notify(&self) {
-        self.event.notify(usize::MAX);
+        self.block_wait.notify();
     }
 }
 

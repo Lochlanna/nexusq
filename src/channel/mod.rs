@@ -33,8 +33,8 @@ impl From<tracker::TrackerError> for ChannelError {
     }
 }
 
-impl From<receiver::ReceiverError> for ChannelError {
-    fn from(error: receiver::ReceiverError) -> Self {
+impl From<ReceiverError> for ChannelError {
+    fn from(error: ReceiverError) -> Self {
         match error {
             ReceiverError::RegistrationFailed(_) => Self::SetupFailed(Box::new(error)),
             _ => panic!("this path shouldn't be possible, error was {:?}", error),
@@ -305,14 +305,14 @@ mod tests {
                     (0..num_elements).for_each(|v| {
                         expected.insert(v, num_writers);
                     });
-                    let mut resmap = HashMap::with_capacity(num_elements);
+                    let mut result = HashMap::with_capacity(num_elements);
                     res.into_iter().for_each(|v| {
-                        let e = resmap.entry(v).or_insert(0_usize);
+                        let e = result.entry(v).or_insert(0_usize);
                         *e += 1;
                     });
                     let mut missing = HashMap::new();
                     for (key, value) in &expected {
-                        if let Some(val) = resmap.get(key) {
+                        if let Some(val) = result.get(key) {
                             if val != value {
                                 missing.insert(*key, *val);
                             }
@@ -323,7 +323,7 @@ mod tests {
                     if !missing.is_empty() {
                         println!("diff is {missing:?}");
                     }
-                    assert_eq!(resmap, expected);
+                    assert_eq!(result, expected);
                 }
                 Err(_) => panic!("reader didnt' read enough"),
             }
