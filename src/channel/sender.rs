@@ -1,7 +1,10 @@
-use super::*;
-use crate::channel::tracker::Tracker;
 use alloc::sync::Arc;
 use core::mem::forget;
+
+use super::tracker::{ProducerTracker, Tracker};
+use super::Core;
+use crate::utils::FastMod;
+use crate::BroadcastReceiver;
 
 #[derive(Debug)]
 pub enum SenderError {
@@ -116,13 +119,13 @@ where
 
 #[cfg(test)]
 mod sender_tests {
-    use crate::channel::*;
+    use crate::channel::Ring;
+    use crate::*;
 
     #[test]
     fn sender_from_receiver() {
         let (_, mut receiver) = channel(10).expect("couldn't create channel").dissolve();
-        let mut sender: BroadcastSender<Ring<i32, SpinBlockWait, SpinBlockWait>> =
-            receiver.clone().into();
+        let mut sender: BroadcastSender<Ring<i32, _, _>> = receiver.clone().into();
         sender.send(42);
         let v = receiver.recv();
         assert_eq!(v, 42);

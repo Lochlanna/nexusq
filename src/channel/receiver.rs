@@ -1,7 +1,11 @@
-use super::*;
-use crate::channel::tracker::{Tracker, TrackerError};
-use alloc::sync::Arc;
 use thiserror::Error as ThisError;
+
+use alloc::sync::Arc;
+
+use super::tracker::{ReceiverTracker, Tracker, TrackerError};
+use super::Core;
+use crate::utils::FastMod;
+use crate::BroadcastSender;
 
 #[derive(Debug, ThisError)]
 pub enum ReceiverError {
@@ -153,7 +157,7 @@ mod receiver_tests {
     fn receiver_from_sender() {
         let (mut sender, _) = channel(10).expect("couldn't create channel").dissolve();
         sender.send(42);
-        let mut receiver: BroadcastReceiver<Ring<i32, SpinBlockWait, SpinBlockWait>> = sender
+        let mut receiver: BroadcastReceiver<Ring<i32, _, _>> = sender
             .try_into()
             .expect("couldn't create receiver from sender");
         let v = receiver.recv();

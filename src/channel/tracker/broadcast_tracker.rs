@@ -1,10 +1,9 @@
-use super::Tracker;
-use crate::channel::tracker::ReceiverTracker;
-use crate::channel::wait_strategy::WaitStrategy;
-use crate::channel::{tracker, FastMod};
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::atomic::AtomicIsize;
+use core::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
+
+use super::{ReceiverTracker, Tracker, TrackerError};
+use crate::utils::FastMod;
+use crate::WaitStrategy;
 
 #[derive(Debug)]
 pub struct MultiCursorTracker<WS> {
@@ -66,10 +65,10 @@ impl<WS> ReceiverTracker for MultiCursorTracker<WS>
 where
     WS: WaitStrategy,
 {
-    fn register(&self, mut at: isize) -> Result<isize, tracker::TrackerError> {
+    fn register(&self, mut at: isize) -> Result<isize, TrackerError> {
         at = at.clamp(0, isize::MAX);
         if at < self.tail.load(Ordering::Acquire) {
-            return Err(tracker::TrackerError::PositionTooOld);
+            return Err(TrackerError::PositionTooOld);
         }
         let idx = (at as usize).pow_2_mod(self.counters.len());
         unsafe {
@@ -86,7 +85,7 @@ where
                     .fetch_sub(1, Ordering::SeqCst);
                 debug_assert!(previous == 1);
             }
-            return Err(tracker::TrackerError::PositionTooOld);
+            return Err(TrackerError::PositionTooOld);
         }
         self.num_readers.fetch_add(1, Ordering::Release);
         Ok(at)

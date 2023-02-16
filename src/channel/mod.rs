@@ -1,18 +1,18 @@
 pub mod receiver;
 pub mod sender;
-pub mod tracker;
+mod tracker;
 pub mod wait_strategy;
 
-use crate::channel::tracker::{ProducerTracker, ReceiverTracker, Tracker};
-use crate::channel::wait_strategy::{BusyWait, SpinBlockWait};
-use crate::{BroadcastReceiver, BroadcastSender, ReceiverError};
+use thiserror::Error as ThisError;
+
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use thiserror::Error as ThisError;
-use tracker::MultiCursorTracker;
-use tracker::SequentialProducerTracker;
-use wait_strategy::WaitStrategy;
+
+use receiver::{BroadcastReceiver, ReceiverError};
+use sender::BroadcastSender;
+use tracker::{MultiCursorTracker, ProducerTracker, ReceiverTracker, SequentialProducerTracker};
+use wait_strategy::{BlockWait, BusyWait, WaitStrategy};
 
 #[derive(Debug, ThisError)]
 pub enum ChannelError {
@@ -42,31 +42,10 @@ impl From<ReceiverError> for ChannelError {
     }
 }
 
-pub trait FastMod: Sized {
-    fn pow_2_mod(&self, denominator: Self) -> Self;
-}
-impl FastMod for isize {
-    #[inline(always)]
-    fn pow_2_mod(&self, denominator: Self) -> Self {
-        debug_assert!(*self >= 0);
-        debug_assert!(denominator.is_positive());
-        debug_assert!((denominator as usize).is_power_of_two());
-        *self & (denominator - 1)
-    }
-}
-
-impl FastMod for usize {
-    #[inline(always)]
-    fn pow_2_mod(&self, denominator: Self) -> Self {
-        debug_assert!(denominator.is_power_of_two());
-        *self & (denominator - 1)
-    }
-}
-
 pub trait Core {
     type T;
-    type SendTracker: Tracker + ProducerTracker;
-    type ReadTracker: Tracker + ReceiverTracker;
+    type SendTracker: ProducerTracker;
+    type ReadTracker: ReceiverTracker;
     fn sender_tracker(&self) -> &Self::SendTracker;
     fn reader_tracker(&self) -> &Self::ReadTracker;
     fn ring(&self) -> *mut Vec<Self::T>;
@@ -183,10 +162,8 @@ where
 }
 
 ///Creates a new mpmc broadcast channel returning both a sender and receiver
-pub fn channel<T>(
-    size: usize,
-) -> Result<ChannelHandles<T, SpinBlockWait, SpinBlockWait>, ChannelError> {
-    channel_with(size, SpinBlockWait::default(), SpinBlockWait::default())
+pub fn channel<T>(size: usize) -> Result<ChannelHandles<T, BlockWait, BlockWait>, ChannelError> {
+    channel_with(size, Default::default(), Default::default())
 }
 
 pub fn busy_channel<T>(size: usize) -> Result<ChannelHandles<T, BusyWait, BusyWait>, ChannelError> {
