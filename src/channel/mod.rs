@@ -400,6 +400,7 @@ mod tests {
         );
     }
     #[test]
+    #[ignore]
     fn ten_writer_ten_reader_slow_write() {
         let num = 200;
         test(

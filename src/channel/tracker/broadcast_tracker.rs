@@ -74,7 +74,7 @@ where
         unsafe {
             self.counters
                 .get_unchecked(idx)
-                .fetch_add(1, Ordering::SeqCst);
+                .fetch_add(1, Ordering::AcqRel);
         }
         if at < self.tail.load(Ordering::Acquire) {
             // we missed it. Undo
@@ -82,7 +82,7 @@ where
                 let previous = self
                     .counters
                     .get_unchecked(idx)
-                    .fetch_sub(1, Ordering::SeqCst);
+                    .fetch_sub(1, Ordering::AcqRel);
                 debug_assert!(previous == 1);
             }
             return Err(TrackerError::PositionTooOld);
@@ -103,7 +103,7 @@ where
         unsafe {
             self.counters
                 .get_unchecked(to_idx)
-                .fetch_add(1, Ordering::SeqCst);
+                .fetch_add(1, Ordering::AcqRel);
             previous = self
                 .counters
                 .get_unchecked(from_idx)
@@ -118,7 +118,7 @@ where
 
     fn de_register(&self, at: isize) {
         if at >= 0 {
-            let num_readers_left = self.num_readers.fetch_sub(1, Ordering::Release) - 1;
+            let num_readers_left = self.num_readers.fetch_sub(1, Ordering::AcqRel) - 1;
             let index = (at as usize).pow_2_mod(self.counters.len());
             let previous;
             unsafe {
