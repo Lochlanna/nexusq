@@ -196,6 +196,7 @@ mod tests {
     use crate::Receiver;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
+    use std::sync::atomic::AtomicBool;
     use std::thread::{spawn, JoinHandle};
     use std::time::Duration;
 
@@ -377,6 +378,29 @@ mod tests {
     fn three_writer_three_reader() {
         let num = 5000;
         test(num, 3, 3, 10, Default::default(), Default::default());
+    }
+
+    #[test]
+    fn test_latency() {
+        let (mut sender, mut receiver) = channel_with::<std::time::Instant, _, _>(100, BusyWait::default(), BusyWait::default()).expect("coudln't create channel").dissolve();
+        let ready = Arc::new(AtomicBool::new(false));
+        let ready_cloned = ready.clone();
+        let th = std::thread::spawn(move || {
+            ready_cloned.store(true, std::sync::atomic::Ordering::SeqCst);
+            let t = receiver.recv();
+            let e = t.elapsed();
+            println!("duration was, {}µs", e.as_micros());
+            e
+        });
+        while !ready.load(std::sync::atomic::Ordering::Acquire) {
+            std::hint::spin_loop();
+        }
+        let s = std::time::Instant::now();
+        while s.elapsed().as_micros() < 1000 {
+            std::hint::spin_loop();
+        }
+        sender.send(std::time::Instant::now());
+        let _ = th.join();
     }
 
     #[test]
