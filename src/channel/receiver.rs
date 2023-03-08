@@ -4,6 +4,7 @@ use alloc::sync::Arc;
 
 use super::tracker::{ReceiverTracker, Tracker, TrackerError};
 use super::Core;
+use crate::channel::Ring;
 use crate::utils::FastMod;
 use crate::BroadcastSender;
 
@@ -20,17 +21,14 @@ pub trait Receiver<T>: Clone {
 }
 
 #[derive(Debug)]
-pub struct BroadcastReceiver<CORE: Core> {
-    core: Arc<CORE>,
+pub struct BroadcastReceiver<T> {
+    core: Arc<Ring<T>>,
     internal_cursor: isize,
     capacity: isize,
     committed_cache: isize,
 }
 
-impl<CORE> Drop for BroadcastReceiver<CORE>
-where
-    CORE: Core,
-{
+impl<T> Drop for BroadcastReceiver<T> {
     fn drop(&mut self) {
         self.core
             .reader_tracker()
@@ -38,13 +36,10 @@ where
     }
 }
 
-impl<CORE> TryFrom<Arc<CORE>> for BroadcastReceiver<CORE>
-where
-    CORE: Core,
-{
+impl<T> TryFrom<Arc<Ring<T>>> for BroadcastReceiver<T> {
     type Error = ReceiverError;
 
-    fn try_from(core: Arc<CORE>) -> Result<Self, Self::Error> {
+    fn try_from(core: Arc<Ring<T>>) -> Result<Self, Self::Error> {
         let committed = core.sender_tracker().current();
         let internal_cursor = committed.clamp(0, isize::MAX) - 1;
         core.reader_tracker()
@@ -60,21 +55,15 @@ where
     }
 }
 
-impl<CORE> TryFrom<BroadcastSender<CORE>> for BroadcastReceiver<CORE>
-where
-    CORE: Core,
-{
+impl<T> TryFrom<BroadcastSender<T>> for BroadcastReceiver<T> {
     type Error = ReceiverError;
 
-    fn try_from(sender: BroadcastSender<CORE>) -> Result<Self, Self::Error> {
+    fn try_from(sender: BroadcastSender<T>) -> Result<Self, Self::Error> {
         sender.get_core().try_into()
     }
 }
 
-impl<CORE> Clone for BroadcastReceiver<CORE>
-where
-    CORE: Core,
-{
+impl<T> Clone for BroadcastReceiver<T> {
     /// Creates a new receiver at the same point in the stream
     fn clone(&self) -> Self {
         self.core
@@ -90,10 +79,7 @@ where
     }
 }
 
-impl<CORE> BroadcastReceiver<CORE>
-where
-    CORE: Core,
-{
+impl<T> BroadcastReceiver<T> {
     #[inline(always)]
     fn increment_internal(&mut self) {
         self.internal_cursor += 1;
@@ -108,19 +94,18 @@ where
     pub fn add_stream(&self) -> Result<Self, ReceiverError> {
         self.core.clone().try_into()
     }
-    pub(crate) fn get_core(&self) -> Arc<CORE> {
+    pub(crate) fn get_core(&self) -> Arc<Ring<T>> {
         self.core.clone()
     }
 }
 
-impl<CORE> BroadcastReceiver<CORE>
+impl<T> BroadcastReceiver<T>
 where
-    CORE: Core,
-    <CORE as Core>::T: Clone,
+    T: Clone,
 {
     /// Read the next value from the channel. This function will block and wait for data to
     /// become available.
-    pub fn recv(&mut self) -> CORE::T {
+    pub fn recv(&mut self) -> T {
         self.increment_internal();
         if self.committed_cache < self.internal_cursor {
             self.committed_cache = self.core.sender_tracker().wait_for(self.internal_cursor);
@@ -139,12 +124,11 @@ where
     }
 }
 
-impl<CORE> Receiver<CORE::T> for BroadcastReceiver<CORE>
+impl<T> Receiver<T> for BroadcastReceiver<T>
 where
-    CORE: Core,
-    <CORE as Core>::T: Clone,
+    T: Clone,
 {
-    fn recv(&mut self) -> Result<CORE::T, ReceiverError> {
+    fn recv(&mut self) -> Result<T, ReceiverError> {
         Ok(BroadcastReceiver::recv(self))
     }
 }
@@ -157,7 +141,7 @@ mod receiver_tests {
     fn receiver_from_sender() {
         let (mut sender, _) = channel(10).expect("couldn't create channel").dissolve();
         sender.send(42);
-        let mut receiver: BroadcastReceiver<Ring<i32, _, _>> = sender
+        let mut receiver: BroadcastReceiver<i32> = sender
             .try_into()
             .expect("couldn't create receiver from sender");
         let v = receiver.recv();

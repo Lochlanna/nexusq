@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicIsize, Ordering};
 
 use super::{ProducerTracker, Tracker};
-use crate::WaitStrategy;
+use crate::channel::WaitStrategy;
 
 #[derive(Debug)]
 pub struct SequentialProducerTracker<WS> {

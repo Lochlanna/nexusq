@@ -2,8 +2,8 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
 use super::{ReceiverTracker, Tracker, TrackerError};
+use crate::channel::WaitStrategy;
 use crate::utils::FastMod;
-use crate::WaitStrategy;
 
 #[derive(Debug)]
 pub struct MultiCursorTracker<WS> {

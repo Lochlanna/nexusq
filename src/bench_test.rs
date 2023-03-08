@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use std::io::Write;
 
-use crate::{channel_with, BlockWait, ChannelHandles};
+use crate::{channel_with, ChannelHandles};
 use workerpool::thunk::{Thunk, ThunkWorker};
 use workerpool::Pool;
 
@@ -12,13 +12,12 @@ trait TestReceiver<T>: Send {
     fn another(&self) -> Self;
 }
 
-impl<CORE> TestReceiver<CORE::T> for crate::BroadcastReceiver<CORE>
+impl<T> TestReceiver<T> for crate::BroadcastReceiver<T>
 where
-    CORE: crate::Core + Send + Sync,
-    <CORE as crate::Core>::T: Clone,
+    T: Clone,
 {
     #[inline(always)]
-    fn test_recv(&mut self) -> CORE::T {
+    fn test_recv(&mut self) -> T {
         self.recv()
     }
 
@@ -32,12 +31,11 @@ trait TestSender<T>: Send {
     fn another(&self) -> Self;
 }
 
-impl<CORE> TestSender<CORE::T> for crate::BroadcastSender<CORE>
+impl<T> TestSender<T> for crate::BroadcastSender<T>
 where
-    CORE: crate::Core + Send + Sync,
-    <CORE as crate::Core>::T: Send,
+    T: Send,
 {
-    fn test_send(&mut self, value: CORE::T) {
+    fn test_send(&mut self, value: T) {
         self.send(value);
     }
 
@@ -72,8 +70,7 @@ fn nexus(
     let mut total_duration = Duration::new(0, 0);
     for _ in 0..iters {
         let ChannelHandles { sender, receiver } =
-            channel_with(100, BlockWait::default(), BlockWait::default())
-                .expect("couldn't create channel");
+            channel_with(100).expect("couldn't create channel");
         let mut receivers: Vec<_> = (0..readers - 1).map(|_| receiver.another()).collect();
         let mut senders: Vec<_> = (0..writers - 1).map(|_| sender.another()).collect();
         receivers.push(receiver);

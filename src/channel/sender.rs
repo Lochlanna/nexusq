@@ -3,6 +3,7 @@ use core::mem::forget;
 
 use super::tracker::{ProducerTracker, Tracker};
 use super::Core;
+use crate::channel::Ring;
 use crate::utils::FastMod;
 use crate::BroadcastReceiver;
 
@@ -20,13 +21,13 @@ pub trait Sender<T: Send>: Clone {
 }
 
 #[derive(Debug)]
-pub struct BroadcastSender<CORE> {
-    core: Arc<CORE>,
+pub struct BroadcastSender<T> {
+    core: Arc<Ring<T>>,
     capacity: isize,
     cached_tail: isize,
 }
 
-impl<CORE> Clone for BroadcastSender<CORE> {
+impl<T> Clone for BroadcastSender<T> {
     fn clone(&self) -> Self {
         Self {
             core: self.core.clone(),
@@ -36,11 +37,8 @@ impl<CORE> Clone for BroadcastSender<CORE> {
     }
 }
 
-impl<CORE> From<Arc<CORE>> for BroadcastSender<CORE>
-where
-    CORE: Core,
-{
-    fn from(disruptor: Arc<CORE>) -> Self {
+impl<T> From<Arc<Ring<T>>> for BroadcastSender<T> {
+    fn from(disruptor: Arc<Ring<T>>) -> Self {
         let capacity = disruptor.capacity() as isize;
         Self {
             core: disruptor,
@@ -50,19 +48,13 @@ where
     }
 }
 
-impl<CORE> From<BroadcastReceiver<CORE>> for BroadcastSender<CORE>
-where
-    CORE: Core,
-{
-    fn from(receiver: BroadcastReceiver<CORE>) -> Self {
+impl<T> From<BroadcastReceiver<T>> for BroadcastSender<T> {
+    fn from(receiver: BroadcastReceiver<T>) -> Self {
         receiver.get_core().into()
     }
 }
 
-impl<CORE> BroadcastSender<CORE>
-where
-    CORE: Core,
-{
+impl<T> BroadcastSender<T> {
     fn claim(&mut self) -> isize {
         let claimed = self.core.sender_tracker().make_claim();
 
@@ -75,13 +67,13 @@ where
         claimed
     }
 
-    pub fn send(&mut self, value: CORE::T) {
+    pub fn send(&mut self, value: T) {
         let claimed_id = self.claim();
         self.internal_send(value, claimed_id)
     }
 
     #[inline(always)]
-    fn internal_send(&mut self, value: CORE::T, claimed_id: isize) {
+    fn internal_send(&mut self, value: T, claimed_id: isize) {
         debug_assert!(claimed_id >= 0);
         let index = claimed_id.pow_2_mod(self.capacity) as usize;
 
@@ -102,30 +94,28 @@ where
         }
     }
 
-    pub(crate) fn get_core(&self) -> Arc<CORE> {
+    pub(crate) fn get_core(&self) -> Arc<Ring<T>> {
         self.core.clone()
     }
 }
 
-impl<CORE> Sender<CORE::T> for BroadcastSender<CORE>
+impl<T> Sender<T> for BroadcastSender<T>
 where
-    CORE: Core,
-    <CORE as Core>::T: Send,
+    T: Send,
 {
-    fn send(&mut self, value: CORE::T) {
+    fn send(&mut self, value: T) {
         BroadcastSender::send(self, value)
     }
 }
 
 #[cfg(test)]
 mod sender_tests {
-    use crate::channel::Ring;
     use crate::*;
 
     #[test]
     fn sender_from_receiver() {
         let (_, mut receiver) = channel(10).expect("couldn't create channel").dissolve();
-        let mut sender: BroadcastSender<Ring<i32, _, _>> = receiver.clone().into();
+        let mut sender: BroadcastSender<i32> = receiver.clone().into();
         sender.send(42);
         let v = receiver.recv();
         assert_eq!(v, 42);

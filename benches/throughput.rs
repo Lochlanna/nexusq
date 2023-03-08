@@ -5,7 +5,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use std::fmt::{Display, Formatter};
 use std::time::{Duration, Instant};
 
-use nexusq::{channel_with, BlockWait};
+use nexusq::channel_with;
 use workerpool::thunk::{Thunk, ThunkWorker};
 use workerpool::Pool;
 
@@ -34,7 +34,7 @@ fn nexus(
 ) -> Duration {
     let mut total_duration = Duration::new(0, 0);
     for _ in 0..iters {
-        let (sender, receiver) = channel_with(100, BlockWait::default(), BlockWait::default())
+        let (sender, receiver) = channel_with(100)
             .expect("couldn't create channel")
             .dissolve();
 

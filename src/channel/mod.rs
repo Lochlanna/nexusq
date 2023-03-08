@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use receiver::{BroadcastReceiver, ReceiverError};
 use sender::BroadcastSender;
 use tracker::{MultiCursorTracker, ProducerTracker, ReceiverTracker, SequentialProducerTracker};
-use wait_strategy::{BlockWait, BusyWait, WaitStrategy};
+use wait_strategy::{SpinBlockWait, WaitStrategy};
 
 #[derive(Debug, ThisError)]
 pub enum ChannelError {
@@ -53,19 +53,19 @@ pub trait Core {
 }
 
 #[derive(Debug)]
-pub struct Ring<T, WTWS, RTWS> {
+pub struct Ring<T> {
     ring: *mut Vec<T>,
     capacity: usize,
     // is there a better way than events?
-    sender_tracker: SequentialProducerTracker<WTWS>,
+    sender_tracker: SequentialProducerTracker<SpinBlockWait>,
     // Reference to each reader to get their position. It should be sorted(how..?)
-    reader_tracker: MultiCursorTracker<RTWS>,
+    reader_tracker: MultiCursorTracker<SpinBlockWait>,
 }
 
-unsafe impl<T, WWS, RWS> Send for Ring<T, WWS, RWS> {}
-unsafe impl<T, WWS, RWS> Sync for Ring<T, WWS, RWS> {}
+unsafe impl<T> Send for Ring<T> {}
+unsafe impl<T> Sync for Ring<T> {}
 
-impl<T, WWS, RWS> Drop for Ring<T, WWS, RWS> {
+impl<T> Drop for Ring<T> {
     fn drop(&mut self) {
         unsafe {
             drop(Box::from_raw(self.ring));
@@ -73,16 +73,8 @@ impl<T, WWS, RWS> Drop for Ring<T, WWS, RWS> {
     }
 }
 
-impl<T, WWS, RWS> Ring<T, WWS, RWS>
-where
-    WWS: WaitStrategy,
-    RWS: WaitStrategy,
-{
-    pub(crate) fn new(
-        mut buffer_size: usize,
-        write_tracker_wait_strategy: WWS,
-        read_tracker_wait_strategy: RWS,
-    ) -> Result<Self, ChannelError> {
+impl<T> Ring<T> {
+    pub(crate) fn new(mut buffer_size: usize) -> Result<Self, ChannelError> {
         buffer_size = if let Some(bs) = buffer_size.checked_next_power_of_two() {
             bs
         } else {
@@ -101,20 +93,16 @@ where
         Ok(Self {
             ring,
             capacity: buffer_size,
-            sender_tracker: SequentialProducerTracker::new(write_tracker_wait_strategy),
-            reader_tracker: MultiCursorTracker::new(buffer_size, read_tracker_wait_strategy)?,
+            sender_tracker: SequentialProducerTracker::new(SpinBlockWait::new(0, 0)),
+            reader_tracker: MultiCursorTracker::new(buffer_size, SpinBlockWait::new(0, 0))?,
         })
     }
 }
 
-impl<T, WWS, RWS> Core for Ring<T, WWS, RWS>
-where
-    WWS: WaitStrategy,
-    RWS: WaitStrategy,
-{
+impl<T> Core for Ring<T> {
     type T = T;
-    type SendTracker = SequentialProducerTracker<WWS>;
-    type ReadTracker = MultiCursorTracker<RWS>;
+    type SendTracker = SequentialProducerTracker<SpinBlockWait>;
+    type ReadTracker = MultiCursorTracker<SpinBlockWait>;
 
     fn sender_tracker(&self) -> &Self::SendTracker {
         &self.sender_tracker
@@ -133,57 +121,32 @@ where
     }
 }
 
-pub struct ChannelHandles<T, WTWS: WaitStrategy, RTWS: WaitStrategy> {
-    pub sender: BroadcastSender<Ring<T, WTWS, RTWS>>,
-    pub receiver: BroadcastReceiver<Ring<T, WTWS, RTWS>>,
+pub struct ChannelHandles<T> {
+    pub sender: BroadcastSender<T>,
+    pub receiver: BroadcastReceiver<T>,
 }
 
-impl<T, WTWS, RTWS> ChannelHandles<T, WTWS, RTWS>
-where
-    WTWS: WaitStrategy,
-    RTWS: WaitStrategy,
-{
-    fn new(
-        sender: BroadcastSender<Ring<T, WTWS, RTWS>>,
-        receiver: BroadcastReceiver<Ring<T, WTWS, RTWS>>,
-    ) -> Self {
+impl<T> ChannelHandles<T> {
+    fn new(sender: BroadcastSender<T>, receiver: BroadcastReceiver<T>) -> Self {
         Self { sender, receiver }
     }
-    //Not sure how to get around the complexity without using dyn
-    #[allow(clippy::type_complexity)]
-    pub fn dissolve(
-        self,
-    ) -> (
-        BroadcastSender<Ring<T, WTWS, RTWS>>,
-        BroadcastReceiver<Ring<T, WTWS, RTWS>>,
-    ) {
+
+    pub fn dissolve(self) -> (BroadcastSender<T>, BroadcastReceiver<T>) {
         (self.sender, self.receiver)
     }
 }
 
 ///Creates a new mpmc broadcast channel returning both a sender and receiver
-pub fn channel<T>(size: usize) -> Result<ChannelHandles<T, BlockWait, BlockWait>, ChannelError> {
-    channel_with(size, Default::default(), Default::default())
+pub fn channel<T>(size: usize) -> Result<ChannelHandles<T>, ChannelError> {
+    channel_with(size)
 }
 
-pub fn busy_channel<T>(size: usize) -> Result<ChannelHandles<T, BusyWait, BusyWait>, ChannelError> {
-    channel_with(size, Default::default(), Default::default())
+pub fn busy_channel<T>(size: usize) -> Result<ChannelHandles<T>, ChannelError> {
+    channel_with(size)
 }
 
-pub fn channel_with<T, WTWS, RTWS>(
-    size: usize,
-    write_tracker_wait_strategy: WTWS,
-    read_tracker_wait_strategy: RTWS,
-) -> Result<ChannelHandles<T, WTWS, RTWS>, ChannelError>
-where
-    WTWS: WaitStrategy,
-    RTWS: WaitStrategy,
-{
-    let core = Arc::new(Ring::<T, _, _>::new(
-        size,
-        write_tracker_wait_strategy,
-        read_tracker_wait_strategy,
-    )?);
+pub fn channel_with<T>(size: usize) -> Result<ChannelHandles<T>, ChannelError> {
+    let core = Arc::new(Ring::<T>::new(size)?);
     let sender = sender::BroadcastSender::from(core.clone());
     let receiver = receiver::BroadcastReceiver::try_from(core)?;
     Ok(ChannelHandles::new(sender, receiver))
@@ -382,7 +345,9 @@ mod tests {
 
     #[test]
     fn test_latency() {
-        let (mut sender, mut receiver) = channel_with::<std::time::Instant, _, _>(100, BusyWait::default(), BusyWait::default()).expect("coudln't create channel").dissolve();
+        let (mut sender, mut receiver) = channel_with::<std::time::Instant>(100)
+            .expect("coudln't create channel")
+            .dissolve();
         let ready = Arc::new(AtomicBool::new(false));
         let ready_cloned = ready.clone();
         let th = std::thread::spawn(move || {

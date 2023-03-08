@@ -8,13 +8,12 @@ pub trait TestSender<T>: Send {
     fn another(&self) -> Self;
 }
 
-impl<CORE> TestReceiver<CORE::T> for nexusq::BroadcastReceiver<CORE>
+impl<T> TestReceiver<T> for nexusq::BroadcastReceiver<T>
 where
-    CORE: nexusq::Core + Send + Sync,
-    <CORE as nexusq::Core>::T: Clone,
+    T: Clone,
 {
     #[inline(always)]
-    fn test_recv(&mut self) -> CORE::T {
+    fn test_recv(&mut self) -> T {
         self.recv()
     }
 
@@ -43,12 +42,11 @@ where
     }
 }
 
-impl<CORE> TestSender<CORE::T> for nexusq::BroadcastSender<CORE>
+impl<T> TestSender<T> for nexusq::BroadcastSender<T>
 where
-    CORE: nexusq::Core + Send + Sync,
-    <CORE as nexusq::Core>::T: Send,
+    T: Send,
 {
-    fn test_send(&mut self, value: CORE::T) {
+    fn test_send(&mut self, value: T) {
         self.send(value);
     }
 
