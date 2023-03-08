@@ -77,21 +77,28 @@ impl<T> BroadcastSender<T> {
         debug_assert!(claimed_id >= 0);
         let index = claimed_id.pow_2_mod(self.capacity) as usize;
 
-        let old_value;
+        let mut old_value: Option<T> = None;
         unsafe {
-            old_value = core::mem::replace((*self.core.ring()).get_unchecked_mut(index), value)
+            if claimed_id < self.capacity {
+                core::ptr::copy_nonoverlapping(
+                    &value,
+                    (*self.core.ring()).get_unchecked_mut(index),
+                    1,
+                );
+                forget(value)
+            } else {
+                old_value = Some(core::mem::replace(
+                    (*self.core.ring()).get_unchecked_mut(index),
+                    value,
+                ));
+            }
         }
 
         // Notify other threads that a value has been written
         self.core.sender_tracker().publish(claimed_id);
 
-        // We do this at the end to ensure that we're not worrying about wierd drop functions or
-        // allocations happening during the critical path
-        if claimed_id < self.capacity {
-            forget(old_value);
-        } else {
-            drop(old_value);
-        }
+        // This will ensure that the compiler doesn't do this earlier for some reason (it probably wouldn't anyway)
+        drop(old_value);
     }
 
     pub(crate) fn get_core(&self) -> Arc<Ring<T>> {
