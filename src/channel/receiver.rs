@@ -1,6 +1,7 @@
 use thiserror::Error as ThisError;
 
 use alloc::sync::Arc;
+use std::sync::atomic::{fence, Ordering};
 
 use super::tracker::{ReceiverTracker, Tracker, TrackerError};
 use super::Core;
@@ -116,6 +117,7 @@ where
         debug_assert!(self.committed_cache >= self.internal_cursor);
         let index = self.internal_cursor.pow_2_mod(self.capacity) as usize;
         // the value has been committed so it's safe to read it!
+        fence(Ordering::Acquire);
         let value;
         unsafe {
             value = (*self.core.ring()).get_unchecked(index).clone();

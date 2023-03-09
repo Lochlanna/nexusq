@@ -9,6 +9,7 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+use crate::channel::tracker::Tracker;
 use receiver::{BroadcastReceiver, ReceiverError};
 use sender::BroadcastSender;
 use tracker::{MultiCursorTracker, ProducerTracker, ReceiverTracker, SequentialProducerTracker};
@@ -67,7 +68,13 @@ unsafe impl<T> Sync for Ring<T> {}
 
 impl<T> Drop for Ring<T> {
     fn drop(&mut self) {
+        let current = self.sender_tracker.current();
         unsafe {
+            if current < 0 {
+                (*self.ring).set_len(0);
+            } else if (current as usize) < self.capacity {
+                (*self.ring).set_len(current as usize);
+            }
             drop(Box::from_raw(self.ring));
         }
     }

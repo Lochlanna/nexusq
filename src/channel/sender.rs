@@ -1,5 +1,6 @@
 use alloc::sync::Arc;
 use core::mem::forget;
+use std::sync::atomic::{fence, Ordering};
 
 use super::tracker::{ProducerTracker, Tracker};
 use super::Core;
@@ -92,6 +93,7 @@ impl<T> BroadcastSender<T> {
                     value,
                 ));
             }
+            fence(Ordering::Release)
         }
 
         // Notify other threads that a value has been written
