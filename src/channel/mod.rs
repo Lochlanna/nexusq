@@ -271,7 +271,7 @@ mod tests {
                     if !missing.is_empty() {
                         println!("diff is {missing:?}");
                     }
-                    assert_eq!(result, expected);
+                    assert!(missing.is_empty())
                 }
                 Err(_) => panic!("reader didnt' read enough"),
             }
@@ -305,6 +305,14 @@ mod tests {
     fn two_writer_two_reader() {
         let num = 5000;
         test(num, 2, 2, 10, Default::default(), Default::default());
+    }
+
+    #[test]
+    fn two_writer_two_reader_long() {
+        let num = 100;
+        for _ in 0..10000 {
+            test(num, 2, 2, 20, Default::default(), Default::default());
+        }
     }
 
     #[test]

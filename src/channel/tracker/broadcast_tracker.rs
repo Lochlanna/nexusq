@@ -1,5 +1,6 @@
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
+use std::sync::atomic::compiler_fence;
 
 use super::{ReceiverTracker, Tracker, TrackerError};
 use crate::channel::WaitStrategy;
@@ -104,6 +105,7 @@ where
             self.counters
                 .get_unchecked(to_idx)
                 .fetch_add(1, Ordering::AcqRel);
+            compiler_fence(Ordering::SeqCst);
             previous = self
                 .counters
                 .get_unchecked(from_idx)
