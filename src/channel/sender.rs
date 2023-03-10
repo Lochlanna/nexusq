@@ -93,7 +93,6 @@ impl<T> BroadcastSender<T> {
                     value,
                 ));
             }
-            fence(Ordering::Release)
         }
 
         // Notify other threads that a value has been written

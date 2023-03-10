@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn two_writer_two_reader_long() {
         let num = 100;
-        for _ in 0..10000 {
+        for _ in 0..100000 {
             test(num, 2, 2, 20, Default::default(), Default::default());
         }
     }
