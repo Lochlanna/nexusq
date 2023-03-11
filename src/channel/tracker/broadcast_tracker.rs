@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
-use std::sync::atomic::{compiler_fence, fence};
+use std::sync::atomic::fence;
 
 use super::{ReceiverTracker, Tracker, TrackerError};
 use crate::channel::WaitStrategy;

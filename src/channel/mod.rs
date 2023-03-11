@@ -178,13 +178,25 @@ mod tests {
         thread_num: usize,
     ) -> Vec<usize> {
         let mut results = Vec::with_capacity(num_to_read);
+        let mut counter = HashMap::with_capacity(num_to_read);
+        (0..num_to_read).for_each(|v| {
+            counter.insert(v, 0_usize);
+        });
         let seed = 42 + thread_num;
         let jtter_duration = sleep_time + sleep_time.div_f32(0.5);
         for i in 0..num_to_read {
             let v = receiver.recv();
-            assert!(v.is_ok());
+            let v = v.unwrap();
+            // assert!(v.is_ok());
             jitter_sleep(sleep_time, seed, jtter_duration, i);
-            results.push(v.unwrap());
+            // results.push(v.unwrap());
+            results.push(v);
+            if let Some(count) = counter.get_mut(&v) {
+                (*count) += 1;
+                if *count > 2 {
+                    println!("fuck");
+                }
+            }
         }
         results
     }
@@ -311,7 +323,7 @@ mod tests {
     fn two_writer_two_reader_long() {
         let num = 100;
         for _ in 0..100000 {
-            test(num, 2, 2, 20, Default::default(), Default::default());
+            test(num, 2, 2, 4, Default::default(), Default::default());
         }
     }
 

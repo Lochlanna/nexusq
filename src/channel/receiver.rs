@@ -1,7 +1,6 @@
 use thiserror::Error as ThisError;
 
 use alloc::sync::Arc;
-use std::sync::atomic::{fence, Ordering};
 
 use super::tracker::{ReceiverTracker, Tracker, TrackerError};
 use super::Core;

@@ -1,6 +1,5 @@
 use alloc::sync::Arc;
 use core::mem::forget;
-use std::sync::atomic::{fence, Ordering};
 
 use super::tracker::{ProducerTracker, Tracker};
 use super::Core;
